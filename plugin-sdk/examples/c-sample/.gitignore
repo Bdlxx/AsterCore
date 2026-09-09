@@ -1,0 +1,9 @@
+# Linux .so / macOS .dylib
+*.so
+*.dylib
+# Windows
+*.dll
+*.exe
+*.obj
+*.o
+build/
