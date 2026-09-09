@@ -313,6 +313,15 @@ class ManagerWebPanel:
             ok = run_coro_sync(self._loop(), rt.save_plugin_config(name, data))
             return _ok({"saved": ok}) if ok else _err("保存失败", 400)
 
+        @app.post("/api/accounts/<aid>/plugins/reload")
+        def api_acct_plugins_reload(aid: str):
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            name = request.args.get("name")
+            n = run_coro_sync(self._loop(), rt.reload_plugins(name))
+            return _ok({"plugin_count": n})
+
         @app.get("/api/accounts/<aid>/logs")
         def api_acct_logs(aid: str):
             rt = _rt_of(aid)

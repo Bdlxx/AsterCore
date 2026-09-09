@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -122,23 +123,46 @@ class AccountRuntime:
         log.info("插件 %s 已停用", name)
         return True
 
-    async def reload_plugins(self) -> int:
-        """重扫插件目录：卸载消失的、加载新增的（已加载的保持）"""
-        found = set(self.plugin_loader.discover_names())
-        for name in list(self.plugin_loader.loaded):
-            if name not in found:
-                self.plugin_loader.unload(name)
+    async def reload_plugins(self, name: str | None = None) -> int:
+        """插件热重载：
+        - name=None：全量重扫（卸载消失/加载新增）
+        - name=指定：仅重载该插件（.py/.pyd 源码改动后生效，无需重启）；
+          原生插件先关 host 再重建
+        """
+        targets = [name] if name else list(self.plugin_loader.loaded) \
+            + list(self.plugin_loader.discover_names())
         ctx = PluginContext(account_id=self.account_id, action=self.action)
         _loop = asyncio.get_running_loop()
-        for name in found:
-            if name not in self.plugin_loader.loaded:
-                lp = self.plugin_loader.load(name)
+
+        if name is not None:
+            lp = self.plugin_loader.loaded.pop(name, None)
+            if lp is not None:
+                await lp.shutdown()
+                # 移除已缓存模块，强制重新编译执行
+                sys.modules.pop(f"astercore.plugins.{name}", None)
+            new_lp = self.plugin_loader.load(name)
+            if new_lp is not None:
+                new_lp.config = self._load_plugin_config(name)
+                try:
+                    await new_lp.activate(ctx, loop=_loop)
+                except Exception:
+                    log.exception("插件 %s 重载后激活失败", name)
+            self._refresh_bus()
+            return len(self.plugin_loader.loaded)
+
+        found = set(self.plugin_loader.discover_names())
+        for n in list(self.plugin_loader.loaded):
+            if n not in found:
+                self.plugin_loader.unload(n)
+        for n in found:
+            if n not in self.plugin_loader.loaded:
+                lp = self.plugin_loader.load(n)
                 if lp is not None:
-                    lp.config = self._load_plugin_config(name)
+                    lp.config = self._load_plugin_config(n)
                     try:
                         await lp.activate(ctx, loop=_loop)
                     except Exception:
-                        log.exception("插件 %s 激活失败", name)
+                        log.exception("插件 %s 激活失败", n)
         self._refresh_bus()
         return len(self.plugin_loader.loaded)
 
