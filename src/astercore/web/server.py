@@ -10,6 +10,7 @@ import threading
 from pathlib import Path
 
 from astercore.core.manager import AccountConfig
+from astercore.web.auth import AuthConfig
 from typing import Any, Awaitable, Callable
 
 log = logging.getLogger("astercore.web")
@@ -161,7 +162,8 @@ class ManagerWebPanel:
     loop_provider: () -> 主事件循环（manager.start 等协程在此 loop 执行）
     """
 
-    def __init__(self, manager, loop_provider, static_dir=None) -> None:
+    def __init__(self, manager, loop_provider, static_dir=None,
+                 auth_file: str | Path | None = None) -> None:
         if Flask is None:
             raise RuntimeError("需要 Flask：pip install astercore[web]")
         self.manager = manager
@@ -169,7 +171,12 @@ class ManagerWebPanel:
         self.static_dir = Path(static_dir) if static_dir else Path(__file__).parent / "static"
         self.app = Flask("astercore-web", static_folder=str(self.static_dir),
                          static_url_path="/assets")
+        # 鉴权（分级：none/password/token），文件默认 <accounts>/../web_auth.json
+        auth_path = auth_file or (Path(manager.accounts_dir).parent / "web_auth.json")
+        self.auth = AuthConfig(auth_path)
+        self.app.secret_key = self.auth.secret
         self._routes()
+        self._setup_auth_gate()
 
     def _loop(self):
         try:
@@ -227,6 +234,25 @@ class ManagerWebPanel:
         def api_delete(aid: str):
             mgr.remove(aid)
             return _ok({"deleted": True})
+
+        @app.get("/api/accounts/<aid>/check")
+        def api_check_account(aid: str):
+            """测试连接：按配置创建后端并探测登录态（不启动常驻连接）"""
+            from astercore.core.backend import BackendConfig as _BC, get_registry as _reg
+            cfg = mgr.get_config(aid)
+            if cfg is None:
+                return _err("账号未配置", 404)
+            try:
+                backend = _reg().create(
+                    cfg.backend_name,
+                    _BC(ws_url=cfg.ws_url, http_url=cfg.http_url,
+                        access_token=cfg.access_token),
+                    account_id=aid,
+                )
+                res = run_coro_sync(self._loop(), backend.check(), timeout=8)
+                return _ok(res.to_dict() if hasattr(res, "to_dict") else res)
+            except Exception as e:
+                return _ok({"ok": False, "error": f"探测失败: {e}"})
 
         # ---------- 账号内：插件 / 日志 ----------
         def _rt_of(aid: str):
@@ -301,6 +327,84 @@ class ManagerWebPanel:
             if after > 0:
                 items = [e for e in items if e["ts"] > after]
             return _ok({"logs": items})
+
+    # ---------- 鉴权路由与前置检查 ----------
+    def _setup_auth_gate(self) -> None:
+        from flask import request, session, jsonify
+
+        app = self.app
+        auth = self.auth
+
+        @app.post("/api/login")
+        def api_login():
+            d = request.get_json(force=True, silent=True) or {}
+            mode = auth.mode
+            if mode == "password":
+                if auth.password_ok(d.get("password")):
+                    session["ac_auth"] = True
+                    return _ok({"ok": True})
+                return _err("密码错误", 401)
+            if mode == "token":
+                if auth.token_ok(d.get("token")):
+                    session["ac_auth"] = True
+                    return _ok({"ok": True})
+                return _err("Token 错误", 401)
+            session["ac_auth"] = True
+            return _ok({})  # none 模式
+
+        @app.post("/api/logout")
+        def api_logout():
+            session.pop("ac_auth", None)
+            return _ok({})
+
+        @app.get("/api/auth/status")
+        def api_auth_status():
+            # none 模式视为已通过
+            authed = auth.mode == "none" or bool(session.get("ac_auth"))
+            return _ok({"authed": authed, "mode": auth.mode,
+                        "need": auth.mode != "none" and not authed,
+                        "config": auth.public()})
+
+        @app.post("/api/settings/auth")
+        def api_set_auth():
+            # 变更鉴权需要已有权限（none 模式首次设置视为允许；否则需已登录或正确凭证）
+            if auth.mode != "none" and not session.get("ac_auth"):
+                return _err("需要先登录", 401)
+            d = request.get_json(force=True, silent=True) or {}
+            if "mode" in d:
+                auth.set_mode(str(d["mode"]))
+            if d.get("password"):
+                auth.set_password(str(d["password"]))
+            if d.get("rotate_token"):
+                tok = auth.rotate_token()
+                return _ok({"token": tok, **auth.public()})
+            return _ok(auth.public())
+
+        # 前置检查：密码/token 模式下 API 需要凭证
+        @app.before_request
+        def _gate():
+            p = request.path
+            if p.startswith("/api/login") or p.startswith("/api/auth/") \
+               or p.startswith("/assets/"):
+                return None
+            if auth.mode == "none":
+                return None
+            if auth.mode == "token":
+                tok = request.headers.get("Authorization", "")
+                if tok.startswith("Bearer "):
+                    tok = tok[7:]
+                if not tok:
+                    tok = request.args.get("token")
+                if auth.token_ok(tok):
+                    return None
+                if p.startswith("/api/"):
+                    return jsonify({"ok": False, "error": "需要 Token"}), 401
+                # 页面：跳转登录由前端 401 处理；直接放行 index 由前端接管
+                return None
+            if p.startswith("/api/"):
+                if not session.get("ac_auth"):
+                    return jsonify({"ok": False, "error": "未登录"}), 401
+            return None
 
     def serve(self, host: str = "127.0.0.1", port: int = 8080) -> None:
         self.app.run(host=host, port=port, threaded=True, use_reloader=False)

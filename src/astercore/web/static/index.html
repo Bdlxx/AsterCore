@@ -45,11 +45,20 @@
     align-items:center;justify-content:center;z-index:9}
   #cfgbox .box{background:var(--card);border:1px solid var(--line);border-radius:10px;
     padding:16px;width:560px;max-width:92vw}
+  #loginbox{position:fixed;inset:0;background:var(--bg);z-index:20;display:none;
+    align-items:center;justify-content:center}
+  #loginbox .card{width:340px;text-align:center}
+  #loginbox input{width:100%;margin:8px 0}
 </style>
 </head>
 <body>
-  <h1>栖星 AsterCore</h1>
-  <div class="sub">多账号面板 · 单端口 JSON API（v0.2）</div>
+  <div style="display:flex;justify-content:space-between;align-items:baseline">
+    <div><h1>栖星 AsterCore</h1>
+    <div class="sub">多账号面板 · 单端口 JSON API</div></div>
+    <div><span id="authmode" class="muted" style="font-size:12px"></span>
+      <button class="mini" id="btnSecure" style="display:none" onclick="showSecure()">安全设置</button>
+      <button class="mini" id="btnLogout" style="display:none" onclick="doLogout()">退出</button></div>
+  </div>
 
   <div class="card">
     <div style="display:flex;justify-content:space-between">
@@ -65,6 +74,7 @@
         <input id="n_token" class="wide" placeholder="access_token（可选）">
         <button class="btn" onclick="createAcct()">保存</button>
         <button class="mini" onclick="hideNew()">取消</button>
+        <span class="muted" id="chkMsg" style="font-size:12px"></span>
       </div>
     </div>
     <div id="accts">加载中…</div>
@@ -89,8 +99,69 @@
     <div style="margin-top:8px;text-align:right"><button class="btn" onclick="saveCfg()">保存</button></div>
   </div>
 </div>
+<div id="loginbox">
+  <div class="card">
+    <h1>栖星 AsterCore</h1>
+    <div class="muted" style="margin:6px 0 12px" id="loginHint">请输入访问密码</div>
+    <input id="loginInput" type="password" placeholder="密码 / Token">
+    <button class="btn" style="width:100%" onclick="doLogin()">登录</button>
+  </div>
+</div>
 <script>
 const $ = s => document.querySelector(s);
+let authToken = localStorage.getItem('ac_token') || '';
+async function j(u, o) {
+  o = o || {};
+  const h = o.headers || {};
+  if (authToken) h['Authorization'] = 'Bearer ' + authToken;
+  o.headers = h;
+  const r = await fetch(u, o);
+  let jd; try { jd = await r.json(); } catch(e) { jd = {ok:false,error:'bad resp'}; }
+  if (jd && jd.ok === false && (jd.error === '未登录' || (jd.error||'').includes('Token'))) {
+    showLogin(); throw new Error(jd.error);
+  }
+  return jd;
+}
+async function checkAuth() {
+  const s = await fetch('/api/auth/status').then(r => r.json());
+  const st = s.data || {};
+  $('#authmode').textContent = '模式: ' + ({none:'免密',password:'密码',token:'Token'}[st.mode]||st.mode);
+  if (st.mode !== 'none') {
+    if (st.need) showLogin();
+    else { $('#btnLogout').style.display=''; }
+  } else { $('#loginbox').style.display='none'; }
+  $('#btnSecure').style.display = '';
+  return st;
+}
+function showLogin() {
+  $('#loginHint').textContent = '请输入访问凭证';
+  $('#loginbox').style.display = 'flex';
+}
+async function doLogin() {
+  const v = $('#loginInput').value;
+  const mode = ((await fetch('/api/auth/status').then(r=>r.json())).data||{}).mode;
+  const s = await j('/api/login', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({password:v, token:v})});
+  if (s.ok) { $('#loginbox').style.display='none'; location.reload(); }
+  else alert('登录失败');
+}
+async function doLogout() { await fetch('/api/logout',{method:'POST'}); location.reload(); }
+async function showSecure() {
+  const cfg = (await j('/api/settings/auth', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({})})).config
+    || (await fetch('/api/auth/status').then(r=>r.json())).data.config;
+  const mode = cfg.mode;
+  const sel = prompt('鉴权模式: 输入 none / password / token（当前: ' + mode + '）');
+  if (!sel) return;
+  const body = {mode: sel};
+  if (sel === 'password') { const pw = prompt('设置密码（留空不设）'); if (pw) body.password = pw; }
+  if (sel === 'token') { const rt = prompt('是否重置 Token？输入 yes'); if (rt === 'yes') body.rotate_token = true; }
+  const res = await j('/api/settings/auth', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (res.ok && res.data && res.data.token) alert('新 Token: ' + res.data.token);
+  alert('已保存（mode=' + (res.data && res.data.mode || sel) + '）');
+  await checkAuth();
+}
 let cur = null, lastTs = 0;
 const j = (u, o) => fetch(u, o).then(r => r.json());
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -201,6 +272,7 @@ async function saveCfg() {
 function closeCfg() { $('#cfgbox').style.display = 'none'; }
 
 (async function init(){
+  await checkAuth();
   await loadAccounts();
   setInterval(async () => { await loadAccounts(); }, 3000);
   setInterval(pollLogs, 1000);
