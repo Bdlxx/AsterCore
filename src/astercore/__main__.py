@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from astercore.backends.onebot import OneBotV11Backend  # noqa: F401  确保注册
+from astercore.backends.null import NullBackend  # noqa: F401  确保注册（dry-run）
 from astercore.core.backend import BackendConfig, get_registry
 from astercore.core.models import Event, Segment, seg_text
 from astercore.core.runtime import AccountRuntime
@@ -42,9 +43,9 @@ def _print_title() -> None:
 
 
 async def _run_dry(rt: AccountRuntime, account: str) -> None:
-    """加载插件 + 模拟一条群消息事件，验证「后端事件 → 总线 → 插件」链路。"""
-    rt.bus.set_plugins(rt.plugin_loader.load_all())
-    # 模拟事件：群消息 "你好"
+    """走完整启动（null 后端 + 插件激活注入 ctx）+ 模拟消息，验证到「插件→发送」链路。"""
+    await rt.start()
+    # 模拟事件：群消息 "你好" → demo 插件应通过 ctx.send_group 调 null 后端发送
     fake = Event(
         type="message",
         account_id=account,
@@ -60,7 +61,7 @@ async def _run_dry(rt: AccountRuntime, account: str) -> None:
     print(f"\n[模拟] 投递群消息 user=12345 group=67890 → {fake.raw!r}")
     result = await rt.bus.dispatch(fake)
     print(f"[模拟] 事件链结果: {result}（handled=有插件处理 / passed=无插件处理）")
-    # 再来一条非关键词，验证放行
+    # 非关键词消息 → 放行
     fake2 = Event(
         type="message", account_id=account, platform="dry-run", time=0,
         user_id=12345, group_id=67890, self_id=account,
@@ -68,7 +69,8 @@ async def _run_dry(rt: AccountRuntime, account: str) -> None:
     )
     result2 = await rt.bus.dispatch(fake2)
     print(f"[模拟] 非关键词事件链结果: {result2}")
-    print("\nDry-run 通过：插件加载与事件分发链路正常。")
+    await rt.stop()
+    print("\nDry-run 通过：插件加载/激活注入 ctx/事件分发/发送链路均正常。")
 
 
 async def amain(args: argparse.Namespace) -> int:
@@ -104,6 +106,13 @@ async def amain(args: argparse.Namespace) -> int:
     )
 
     if args.dry_run:
+        # dry-run 强制 null 后端（不连接协议）
+        rt = AccountRuntime(
+            account_id=args.account,
+            data_dir=acct_dir,
+            backend=get_registry().create("null", cfg, account_id=args.account),
+            plugin_dir=plugin_dir,
+        )
         await _run_dry(rt, args.account)
         return 0
 

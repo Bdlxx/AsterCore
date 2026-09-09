@@ -12,7 +12,7 @@ from typing import Any, Callable
 from .backend import Backend
 from .bus import EventBus, PluginLoader
 from .models import ActionResult, Event, seg_text
-from .plugin import Plugin
+from .plugin import Plugin, PluginContext
 
 log = logging.getLogger("astercore.runtime")
 
@@ -44,9 +44,14 @@ class AccountRuntime:
     # ---- 生命周期 ----
     async def start(self) -> None:
         plugins = self.plugin_loader.load_all()
-        # 加载插件配置（data/plugins/<name>/config.json）
+        # 加载插件配置（data/plugins/<name>/config.json）并激活（注入 ctx）
+        ctx = PluginContext(account_id=self.account_id, action=self.action)
         for lp in plugins:
             lp.config = self._load_plugin_config(lp.meta.name)
+            try:
+                await lp.activate(ctx)
+            except Exception:
+                log.exception("插件 %s 激活失败（保持加载但不注入能力）", lp.meta.name)
         self.bus.set_plugins(plugins)
         await self.backend.start()
         log.info("账号 %s 启动完成（后端 %s，插件 %d）",

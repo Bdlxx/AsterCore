@@ -5,9 +5,64 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
-from .models import Event, Segment
+from .models import Event, Segment, seg_text
+
+
+class PluginContext:
+    """注入给插件的动作入口（对应《ABI 草案》NapApi.action）。
+
+    插件通过它发消息/执行动作；内部包装账号后端的统一 Action。
+    v0.1 提供最常用便捷方法，完整动作集见 core.models 动作常量。
+    """
+
+    def __init__(self, account_id: int | str | None,
+                 action: Callable[[str, dict[str, Any]], Awaitable[Any]]) -> None:
+        self.account_id = account_id
+        self._action = action
+
+    async def send_group(self, group_id: int | str, message: list[Segment] | str):
+        """发群消息：message 可为 Segment 列表或纯文本"""
+        return await self._action("send_group", {
+            "group_id": group_id,
+            "message": _norm_message(message),
+        })
+
+    async def send_private(self, user_id: int | str, message: list[Segment] | str):
+        return await self._action("send_private", {
+            "user_id": user_id,
+            "message": _norm_message(message),
+        })
+
+    async def send_message(self, message_type: str, target: int | str,
+                           message: list[Segment] | str):
+        """按类型发：message_type=group/private"""
+        act = "send_group" if message_type == "group" else "send_private"
+        key = "group_id" if message_type == "group" else "user_id"
+        return await self._action(act, {key: target, "message": _norm_message(message)})
+
+    async def recall(self, message_id: int | str):
+        return await self._action("recall_message", {"message_id": message_id})
+
+    async def set_group_ban(self, group_id, user_id, duration: int = 600):
+        return await self._action("set_group_ban", {
+            "group_id": group_id, "user_id": user_id, "duration": duration})
+
+    async def action(self, action: str, params: dict[str, Any]):
+        """任意统一动作（透传）"""
+        params = dict(params)
+        params.setdefault("account_id", self.account_id)
+        return await self._action(action, params)
+
+
+def _norm_message(message: list[Segment] | Segment | str) -> list[dict]:
+    if isinstance(message, str):
+        return [seg_text(message).to_dict()]
+    if isinstance(message, Segment):
+        return [message.to_dict()]
+    return [s.to_dict() for s in message]
+
 
 # 插件 handle 返回值语义（与 ABI 草案一致）
 HANDLE_NOT_HANDLED = False  # 未处理，放行后续插件
@@ -42,12 +97,14 @@ class Plugin:
 
     def __init__(self) -> None:
         self.config: dict[str, Any] = {}
+        self.ctx: PluginContext | None = None
         self.log: Callable[[int, str], None] | None = None
 
-    # 生命周期
-    async def on_load(self, config: dict[str, Any]) -> None:
+    # 生命周期（ctx 由内核注入：发消息/执行动作的能力）
+    async def on_load(self, config: dict[str, Any], ctx: PluginContext | None = None) -> None:
         """加载（可异步初始化）；异常会导致插件被标记失败"""
         self.config = config or {}
+        self.ctx = ctx
 
     async def on_unload(self) -> None: ...
 
@@ -67,6 +124,7 @@ class Plugin:
 __all__ = [
     "PluginMeta",
     "Plugin",
+    "PluginContext",
     "HANDLE_HANDLED",
     "HANDLE_NOT_HANDLED",
     "Event",

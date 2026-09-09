@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .models import Event
-from .plugin import HANDLE_NOT_HANDLED, Plugin, PluginMeta
+from .plugin import HANDLE_NOT_HANDLED, Plugin, PluginContext, PluginMeta
 
 log = logging.getLogger("astercore.plugins")
 
@@ -24,6 +24,19 @@ class LoadedPlugin:
     instance: Plugin | None = None  # 类插件
     config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
+    ctx: PluginContext | None = None
+
+    async def activate(self, ctx: PluginContext) -> None:
+        """生命周期激活：注入 ctx；类插件走 on_load，函数式插件走模块级 setup(ctx)"""
+        self.ctx = ctx
+        if self.instance is not None:
+            await self.instance.on_load(self.config, ctx)
+        else:
+            setup = getattr(self.module, "setup", None)
+            if setup is not None:
+                ret = setup(ctx)
+                if hasattr(ret, "__await__"):
+                    await ret
 
     async def handle(self, event: Event) -> bool | str:
         """调用插件处理事件（同步/异步统一 await）"""
