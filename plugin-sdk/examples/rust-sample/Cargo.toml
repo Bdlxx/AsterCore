@@ -1,0 +1,13 @@
+# Rust 原生插件模板（cdylib）
+# 构建：cargo build --release → target/release/libnap_rs.so（或 .dll）
+# 复制为 <插件名>.so/.dll 放入插件目录即被 AsterCore 统一加载器识别（原生 C-ABI 通道）。
+
+[package]
+name = "nap_rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]

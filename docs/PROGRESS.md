@@ -56,7 +56,8 @@
 | 原生 C-ABI（nap_plugin.h + C 示例） | ✅ ctypes 加载 |
 | plugin-host 子进程隔离 | ✅（崩溃隔离 + 自动重启 + 统一池接入） |
 | 原生/Python 双通道自动判别（import 优先） | ✅ |
-| 语言模板（Rust/C++/易语言） | ⬜ |
+| Rust 模板（cdylib，plugin-sdk/rust-sample） | ✅（文件就绪，待 cargo 编译验证） |
+| C++ / 易语言模板 | ⬜ |
 | host 崩溃自动禁用（重启耗尽 → 停用） | ✅ |
 
 ### 打包与分发（Phase 5 · 🔶）
@@ -78,11 +79,11 @@ Lagrange 子进程托管 / backend-lagrange / 风险提示 —— 未开始。
 
 | 项 | 值 |
 |---|---|
-| 单元测试 | 26 个（翻译/映射/运行时/启停/日志/账号管理/原生ABI/隔离/自动重启） |
+| 单元测试 | 28 个（+ 类插件加载/配置热更） |
 | 端到端验证 | fake OneBot WS 联调：WS↔翻译↔插件↔发送 全链路 ✅ |
 | 提交数（本地） | 17+ |
 | GitHub 远端 | Bdlxx/AsterCore（11 提交已同步；workflow 待权限） |
-| 示例插件 | demo_hello（打招呼，ctx 发送） |
+| 示例插件 | demo_hello(.py/.so) · demo_counter(类插件/热更) · C/Rust 原生示例 |
 
 ---
 
