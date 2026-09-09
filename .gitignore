@@ -1,0 +1,23 @@
+# 数据（用户/账号/运行时）
+data/
+accounts/
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 构建产物
+dist/
+build/
+*.spec
+
+# 运行时
+*.log
+runtime.json
+
+# 打包缓存
+updater/tmp/
+updater/backup/
