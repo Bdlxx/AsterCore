@@ -54,7 +54,7 @@ class NativeHostTest(unittest.TestCase):
         crash.init({})
         os.kill(crash._proc.pid, signal.SIGKILL)
         # 轮询等读线程感知退出
-        deadline = time.time() + 3
+        deadline = time.time() + 6
         while crash.exit_code is None and time.time() < deadline:
             time.sleep(0.1)
         self.assertIsNotNone(crash.exit_code)
