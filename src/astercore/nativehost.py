@@ -137,6 +137,17 @@ class NativeHostProxy:
                 proc.wait(timeout=3)
             except Exception:
                 proc.kill()
+        # 关闭管道避免资源泄漏（ResourceWarning）
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            if proc.stdout:
+                proc.stdout.close()
+        except Exception:
+            pass
         with self._lock:
             self._proc = None
 
