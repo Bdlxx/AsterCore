@@ -49,6 +49,7 @@ class OneBotV11Backend(Backend):
 
     def __init__(self, cfg: BackendConfig, account_id: int | str | None = None) -> None:
         super().__init__(cfg, account_id)
+        self._path_mapper = None  # fn(host_path: str) -> container_path
         self._ws: websocket.WebSocketApp | None = None
         self._stop_event = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -187,8 +188,34 @@ class OneBotV11Backend(Backend):
             extra={"notice_type": st},
         )
 
+    # ---------------- 路径映射（宿主机→容器，发本地文件必需） ----------------
+    def set_path_mapper(self, fn) -> None:
+        """注入宿主路径→容器路径转换（如 /root/napcat/cache → /app/cache）。
+        发送 image/video/file/record 段前自动应用。"""
+        self._path_mapper = fn
+
+    def _map_message_paths(self, message) -> list[dict] | None:
+        """把消息段里 data.file 宿主路径映射为容器路径（mapper 未注入则原样）"""
+        if not self._path_mapper or not isinstance(message, list):
+            return message
+        out = []
+        for seg in message:
+            seg = dict(seg)
+            data = dict(seg.get("data") or {})
+            if "file" in data and isinstance(data["file"], str):
+                mapped = self._path_mapper(data["file"])
+                if mapped:
+                    data["file"] = mapped
+            seg["data"] = data
+            out.append(seg)
+        return out
+
     # ---------------- 动作 ----------------
     async def action(self, action: str, params: dict[str, Any]) -> ActionResult:
+        # 发送类动作：先映射消息段 file 路径
+        if "message" in params and isinstance(params["message"], list):
+            params = dict(params)
+            params["message"] = self._map_message_paths(params["message"])
         ob = self._to_onebot(action, params)
         if ob is None:
             return ActionResult.fail(f"不支持的动作: {action}")

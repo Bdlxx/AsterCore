@@ -209,6 +209,7 @@ async function loadAccounts() {
       <span class="muted">${a.backend_name}${a.running?' · 运行中':' · 未运行'}</span>
       <span style="margin-left:auto">
         <button class="mini" onclick="event.stopPropagation();toggleAcct('${a.account_id}',${a.running})">${a.running?'停止':'启动'}</button>
+        <button class="mini" onclick="event.stopPropagation();editAcct('${a.account_id}','${a.backend_name}')">编辑</button>
         <button class="mini" onclick="event.stopPropagation();delAcct('${a.account_id}')">删除</button>
       </span>
     </div>`).join('');
@@ -275,9 +276,33 @@ async function togglePl(aid, name, enabled) {
 }
 
 function showNew(){ $('#newform').classList.remove('hidden'); }
-function hideNew(){ $('#newform').classList.add('hidden'); }
+function hideNew(){ $('#newform').classList.add('hidden'); editingAcct=null; $('#n_id').disabled=false; }
 
+let editingAcct = null;
+async function editAcct(id, bn) {
+  editingAcct = id;
+  $('#n_id').value = id; $('#n_id').disabled = true;
+  $('#n_name').value = id;
+  $('#n_ws').value = 'ws://127.0.0.1:3001';
+  $('#n_http').value = 'http://127.0.0.1:3000';
+  $('#n_token').value = '';
+  showNew();
+}
 async function createAcct() {
+  const body = {
+    account_id: $('#n_id').value.trim(),
+    display_name: $('#n_name').value.trim() || $('#n_id').value.trim(),
+    backend: { name: 'onebot', ws_url: $('#n_ws').value.trim(),
+               http_url: $('#n_http').value.trim(), access_token: $('#n_token').value.trim() },
+  };
+  if (editingAcct) {
+    const r = await j(`/api/accounts/${editingAcct}/update`, {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({display_name: body.display_name, backend: body.backend})});
+    if (!r.ok) { alert('更新失败: '+(r.error||'')); return; }
+    editingAcct = null; $('#n_id').disabled = false;
+    hideNew(); await loadAccounts(); return;
+  }
   const body = {
     account_id: $('#n_id').value.trim(),
     display_name: $('#n_name').value.trim() || $('#n_id').value.trim(),

@@ -238,6 +238,27 @@ class ManagerWebPanel:
             run_coro_sync(self._loop(), mgr.remove(aid))
             return _ok({"deleted": True})
 
+        @app.post("/api/accounts/<aid>/update")
+        def api_update_account(aid: str):
+            """编辑账号 backend 配置（改 ws/http/token/显示名）"""
+            d = request.get_json(force=True, silent=True) or {}
+            cfg = mgr.get_config(aid)
+            if cfg is None:
+                return _err("账号未配置", 404)
+            b = d.get("backend") or {}
+            if d.get("display_name"):
+                cfg.display_name = str(d["display_name"])
+            if "name" in b:
+                cfg.backend_name = str(b["name"])
+            if "ws_url" in b:
+                cfg.ws_url = str(b["ws_url"])
+            if "http_url" in b:
+                cfg.http_url = str(b["http_url"])
+            if "access_token" in b:
+                cfg.access_token = str(b["access_token"])
+            mgr.save_config(cfg)
+            return _ok({"account_id": aid})
+
         @app.get("/api/accounts/<aid>/check")
         def api_check_account(aid: str):
             """测试连接：按配置创建后端并探测登录态（不启动常驻连接）"""
