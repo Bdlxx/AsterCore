@@ -151,9 +151,12 @@ class AccountRuntime:
             )
         return _do()
 
-    # ---- 配置 ----
+    # ---- 插件配置（面板读写 config.json） ----
+    def _plugin_config_path(self, name: str) -> Path:
+        return self.data_dir / "plugins" / name / "config.json"
+
     def _load_plugin_config(self, plugin_name: str) -> dict[str, Any]:
-        cf = self.data_dir / "plugins" / plugin_name / "config.json"
+        cf = self._plugin_config_path(plugin_name)
         if cf.exists():
             import json
             try:
@@ -161,3 +164,29 @@ class AccountRuntime:
             except Exception:
                 log.warning("插件配置解析失败: %s", cf)
         return {}
+
+    def get_plugin_config(self, name: str) -> dict[str, Any]:
+        """读插件配置（含运行时内存值，保存后立即反映）"""
+        lp = self.plugin_loader.loaded.get(name)
+        if lp is not None:
+            return dict(lp.config or {})
+        return self._load_plugin_config(name)
+
+    async def save_plugin_config(self, name: str, data: dict[str, Any]) -> bool:
+        """写插件配置并尝试热更（类插件 on_reload；函数式更新内存值）"""
+        import json
+        if not isinstance(data, dict):
+            return False
+        cf = self._plugin_config_path(name)
+        cf.parent.mkdir(parents=True, exist_ok=True)
+        cf.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                      encoding="utf-8")
+        lp = self.plugin_loader.loaded.get(name)
+        if lp is not None:
+            lp.config = dict(data)
+            if lp.instance is not None:
+                try:
+                    await lp.instance.on_reload(dict(data))
+                except Exception:
+                    log.exception("插件 %s 配置热更失败", name)
+        return True

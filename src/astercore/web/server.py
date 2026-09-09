@@ -263,6 +263,22 @@ class ManagerWebPanel:
             ok = run_coro_sync(self._loop(), rt.disable_plugin(name))
             return _ok({"disabled": ok}) if ok else _err("插件不存在", 404)
 
+        @app.get("/api/accounts/<aid>/plugins/<name>/config")
+        def api_acct_plugin_config_get(aid: str, name: str):
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            return _ok(rt.get_plugin_config(name))
+
+        @app.post("/api/accounts/<aid>/plugins/<name>/config")
+        def api_acct_plugin_config_save(aid: str, name: str):
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            data = request.get_json(force=True, silent=True) or {}
+            ok = run_coro_sync(self._loop(), rt.save_plugin_config(name, data))
+            return _ok({"saved": ok}) if ok else _err("保存失败", 400)
+
         @app.get("/api/accounts/<aid>/logs")
         def api_acct_logs(aid: str):
             rt = _rt_of(aid)
