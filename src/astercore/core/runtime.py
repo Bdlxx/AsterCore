@@ -52,10 +52,11 @@ class AccountRuntime:
         plugins = self.plugin_loader.load_all()
         # 加载插件配置（data/plugins/<name>/config.json）并激活（注入 ctx）
         ctx = PluginContext(account_id=self.account_id, action=self.action)
+        _loop = asyncio.get_running_loop()
         for lp in plugins:
             lp.config = self._load_plugin_config(lp.meta.name)
             try:
-                await lp.activate(ctx)
+                await lp.activate(ctx, loop=_loop)
             except Exception:
                 log.exception("插件 %s 激活失败（保持加载但不注入能力）", lp.meta.name)
         self.bus.set_plugins(plugins)
@@ -103,7 +104,7 @@ class AccountRuntime:
             lp.enabled = True
             ctx = PluginContext(account_id=self.account_id, action=self.action)
             try:
-                await lp.activate(ctx)
+                await lp.activate(ctx, loop=asyncio.get_running_loop())
             except Exception:
                 log.exception("插件 %s 激活失败", name)
                 return False
@@ -115,6 +116,7 @@ class AccountRuntime:
         if lp is None:
             return False
         lp.enabled = False
+        await lp.shutdown()
         self._refresh_bus()
         log.info("插件 %s 已停用", name)
         return True
@@ -126,13 +128,14 @@ class AccountRuntime:
             if name not in found:
                 self.plugin_loader.unload(name)
         ctx = PluginContext(account_id=self.account_id, action=self.action)
+        _loop = asyncio.get_running_loop()
         for name in found:
             if name not in self.plugin_loader.loaded:
                 lp = self.plugin_loader.load(name)
                 if lp is not None:
                     lp.config = self._load_plugin_config(name)
                     try:
-                        await lp.activate(ctx)
+                        await lp.activate(ctx, loop=_loop)
                     except Exception:
                         log.exception("插件 %s 激活失败", name)
         self._refresh_bus()

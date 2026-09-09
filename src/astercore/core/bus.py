@@ -16,19 +16,36 @@ from .plugin import HANDLE_NOT_HANDLED, Plugin, PluginContext, PluginMeta
 
 log = logging.getLogger("astercore.plugins")
 
+# 原生插件（延迟 import，避免循环）
+def _make_native_proxy(lib_path, action_cb, loop=None):
+    from ..nativehost import NativeHostProxy
+    return NativeHostProxy(lib_path, action_cb, loop=loop)
+
 
 @dataclass(slots=True)
 class LoadedPlugin:
     meta: PluginMeta
+    kind: str = "py"              # py(模块/类) | native(原生 DLL/SO)
     module: Any = None            # 模块级插件（函数式）
     instance: Plugin | None = None  # 类插件
+    lib_path: Any = None          # 原生库路径（kind=native）
+    native_host: Any = None       # NativeHostProxy（kind=native，activate 后）
     config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     ctx: PluginContext | None = None
 
-    async def activate(self, ctx: PluginContext) -> None:
-        """生命周期激活：注入 ctx；类插件走 on_load，函数式插件走模块级 setup(ctx)"""
+    async def activate(self, ctx: PluginContext, loop=None) -> None:
+        """注入能力并启动：py 走 on_load/setup；native 启动 host 子进程（隔离）"""
         self.ctx = ctx
+        if self.kind == "native":
+            async def _ac(req: dict):
+                # 异步执行账号统一动作（proxy 在事件循环中调度，不阻塞读线程）
+                action = req.get("action", "")
+                params = {k: v for k, v in req.items() if k != "action"}
+                return await ctx.action(action, params)
+            self.native_host = _make_native_proxy(self.lib_path, _ac, loop=loop)
+            self.native_host.init(self.config)
+            return
         if self.instance is not None:
             await self.instance.on_load(self.config, ctx)
         else:
@@ -39,7 +56,14 @@ class LoadedPlugin:
                     await ret
 
     async def handle(self, event: Event) -> bool | str:
-        """调用插件处理事件（同步/异步统一 await）"""
+        if self.kind == "native":
+            if self.native_host is None:
+                return HANDLE_NOT_HANDLED
+            try:
+                return bool(await self.native_host.handle_event_async(event.to_dict()))
+            except Exception:
+                log.exception("原生插件 %s 事件处理异常", self.meta.name)
+                return False
         fn = None
         if self.module is not None and hasattr(self.module, "handle"):
             fn = self.module.handle
@@ -51,6 +75,15 @@ class LoadedPlugin:
         if inspect.isawaitable(ret):
             ret = await ret
         return bool(ret) if not isinstance(ret, str) else ret
+
+    async def shutdown(self) -> None:
+        """停用/卸载：native 关 host"""
+        if self.kind == "native" and self.native_host is not None:
+            try:
+                self.native_host.stop()
+            except Exception:
+                pass
+            self.native_host = None
 
 
 class PluginLoader:
@@ -66,19 +99,32 @@ class PluginLoader:
         self.loaded: dict[str, LoadedPlugin] = {}
 
     def discover_names(self) -> list[str]:
-        """扫描目录内可导入模块名（.py / .pyd）"""
+        """扫描目录内插件名（.py/.pyd 模块 或 .so/.dll 原生库）"""
         if not self.plugins_dir.exists():
             return []
         names: list[str] = []
         for p in sorted(self.plugins_dir.iterdir()):
-            if p.suffix in (".py", ".pyd") and not p.name.startswith("_") and p.name != "__init__.py":
+            if p.suffix in (".py", ".pyd", ".so", ".dll") and not p.name.startswith("_"):
                 names.append(p.stem)
-        return names
+        return list(dict.fromkeys(names))  # 去重保序（同名 py+so 只留 py 优先）
+
 
     def load(self, name: str) -> LoadedPlugin | None:
         if name in self.loaded:
             return self.loaded[name]
         try:
+            # 原生库：仅当同目录无 .py/.pyd 时采用（.py 开发优先）
+            if not (self.plugins_dir / f"{name}.py").exists() \
+               and not (self.plugins_dir / f"{name}.pyd").exists():
+                for sfx in (".so", ".dll"):
+                    lib = self.plugins_dir / f"{name}{sfx}"
+                    if lib.exists():
+                        meta = PluginMeta(name=name, name_cn=f"原生·{name}",
+                                          version="?", description="原生 C-ABI 插件")
+                        lp = LoadedPlugin(meta=meta, kind="native", lib_path=lib)
+                        self.loaded[name] = lp
+                        log.info("已登记原生插件 %s (%s)", name, lib.name)
+                        return lp
             # 优先 .pyd（发布二进制），回退 .py
             spec = None
             for suffix in (".pyd", ".py"):
@@ -120,7 +166,11 @@ class PluginLoader:
         lp = self.loaded.pop(name, None)
         if lp is None:
             return
-        # TODO: 调用 unload 生命周期（v0.1 先支持启停粒度）
+        try:
+            import asyncio
+            asyncio.get_event_loop().run_until_complete(lp.shutdown())
+        except Exception:
+            pass
 
     @staticmethod
     def _read_meta(module: Any, fallback_name: str) -> PluginMeta:

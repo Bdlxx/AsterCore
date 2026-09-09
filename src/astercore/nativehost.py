@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import subprocess
@@ -19,6 +20,14 @@ class HostCrashError(RuntimeError):
     pass
 
 
+def _as_dict(res) -> dict:
+    if hasattr(res, "to_dict"):
+        return res.to_dict()
+    if isinstance(res, dict):
+        return res
+    return {"ok": bool(res)}
+
+
 class NativeHostProxy:
     """子进程隔离的原生插件宿主代理。
 
@@ -26,11 +35,15 @@ class NativeHostProxy:
     lib_path:  原生插件库（.so/.dll）
     """
 
-    def __init__(self, lib_path: str | Path, action_cb: Callable[[dict], dict],
-                 host_args: list[str] | None = None) -> None:
+    def __init__(self, lib_path: str | Path, action_cb,
+                 host_args: list[str] | None = None,
+                 loop: Any | None = None) -> None:
+        """action_cb 可为同步函数或 async（awaitable）"""
         self.lib_path = Path(lib_path)
         self._action_cb = action_cb
         self._host_args = host_args or []
+        self._loop = loop
+        self._send_lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._pending_results: dict[int, dict] = {}
@@ -39,6 +52,7 @@ class NativeHostProxy:
         self._stopping = False
         self._ready = False
         self._handled_flag: bool | None = None
+        self._handled_future: Any | None = None
         self.exit_code: int | None = None
 
     # ---------- 生命周期 ----------
@@ -91,15 +105,39 @@ class NativeHostProxy:
         self._send({"type": "init", "config": config or {}})
         self.wait_ready()
 
+    async def handle_event_async(self, ev: dict) -> bool:
+        """发事件给 host，异步等待 handled 帧（不阻塞事件循环）。"""
+        if self.exit_code is not None:
+            raise HostCrashError(f"host 已退出: {self.exit_code}")
+        with self._lock:
+            if not self._ready:
+                raise HostCrashError("host 未就绪")
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._handled_future = fut
+        self._send({"type": "event", "data": ev})
+        try:
+            return await asyncio.wait_for(fut, timeout=15)
+        except asyncio.TimeoutError:
+            raise HostCrashError("host 事件处理超时") from None
+        finally:
+            if self._handled_future is fut:
+                self._handled_future = None
+
     def handle_event(self, ev: dict) -> bool:
-        """发事件给 host，等 handled 帧"""
+        """同步等待版（仅供非事件循环线程调用；事件循环线程请用 handle_event_async）"""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("事件循环线程请使用 handle_event_async")
         if self.exit_code is not None:
             raise HostCrashError(f"host 已退出: {self.exit_code}")
         with self._lock:
             if not self._ready:
                 raise HostCrashError("host 未就绪")
         self._send({"type": "event", "data": ev})
-        # 等待 handled：由 reader 线程设置（简化：轮询标记）
         deadline = __import__("time").time() + 15
         while __import__("time").time() < deadline:
             with self._lock:
@@ -116,8 +154,9 @@ class NativeHostProxy:
         if proc is None or proc.stdin is None:
             raise HostCrashError("host 未启动")
         try:
-            proc.stdin.write(json.dumps(obj, ensure_ascii=False) + "\n")
-            proc.stdin.flush()
+            with self._send_lock:
+                proc.stdin.write(json.dumps(obj, ensure_ascii=False) + "\n")
+                proc.stdin.flush()
         except (BrokenPipeError, OSError) as e:
             raise HostCrashError(f"host 管道断开: {e}") from e
 
@@ -148,15 +187,36 @@ class NativeHostProxy:
             lv = {0: 10, 1: 20, 2: 30, 3: 40}.get(frame.get("level"), 20)
             log.log(lv, "[host] %s", frame.get("msg", ""))
         elif t == "action":
-            # 插件请求动作：主进程执行并回 action_result
+            # 插件请求动作：异步执行（不阻塞读线程，避免与 host 互相等待），完成回调回包
             aid = frame.get("id")
+            req = frame.get("action", {})
             try:
-                res = self._action_cb(frame.get("action", {}))
+                ret = self._action_cb(req)
+                if asyncio.iscoroutine(ret):
+                    loop = self._loop
+                    if loop is None or not loop.is_running():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    def _done(fut):
+                        try:
+                            res = fut.result()
+                        except Exception as e:
+                            res = {"ok": False, "error": str(e)}
+                        self._send({"type": "action_result", "id": aid,
+                                    "data": _as_dict(res)})
+                    asyncio.run_coroutine_threadsafe(ret, loop).add_done_callback(_done)
+                else:
+                    self._send({"type": "action_result", "id": aid,
+                                "data": _as_dict(ret)})
             except Exception as e:
-                res = {"ok": False, "error": str(e)}
-            self._send({"type": "action_result", "id": aid, "data": res})
+                self._send({"type": "action_result", "id": aid,
+                            "data": {"ok": False, "error": str(e)}})
         elif t == "handled":
+            h = bool(frame.get("handled"))
+            fut = self._handled_future
+            if fut is not None and not fut.done():
+                self._loop.call_soon_threadsafe(fut.set_result, h)
             with self._lock:
-                self._handled_flag = bool(frame.get("handled"))
+                self._handled_flag = h
         elif t == "exited":
             self.exit_code = frame.get("code")
