@@ -11,6 +11,7 @@
 
 ```bash
 pip install -e ".[web]"
+python -m astercore.launch --no-browser   # 启动器：首启向导 → 面板（自动开浏览器去掉 --no-browser）
 python -m astercore --account 10001 --dry-run          # 离线自检（内核+插件链路）
 python -m astercore --account 10001 --ws ws://127.0.0.1:3001 --token xxx   # 连 OneBot v11
 python -m astercore --serve-accounts --accounts-dir accounts --port 8080   # 多账号 Web 面板
@@ -30,7 +31,7 @@ AsterCore.exe（未来桌面壳）
  │   ├─ .pyd   Cython 发布（防小白修改，pack/build_pyd.py）
  │   └─ .dll   原生 C-ABI（plugin-sdk/nap_plugin.h + C 示例）
  │       └─ 运行于 plugin-host 子进程（隔离 + 崩溃自动重启）
- └─ Web 面板（单端口 JSON API + 前端）  账号/插件/配置/实时日志
+ └─ Web 面板（单端口 JSON API + 前端）  账号/插件/配置/实时日志/调试台/鉴权/运行方式
 ```
 
 ## 目录导览

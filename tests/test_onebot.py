@@ -55,6 +55,43 @@ class TranslateTest(unittest.TestCase):
         self.assertEqual(ev.type, "group_increase")
         self.assertEqual(ev.extra["notice_type"], "group_increase")
 
+    def test_image_with_file_and_url(self):
+        payload = {
+            "post_type": "message", "message_type": "group",
+            "group_id": 1, "user_id": 2, "self_id": 740979632, "time": 1,
+            "raw_message": "", "message": [
+                {"type": "image", "data": {"file": "/app/cache/1.jpg", "url": "http://x/1.jpg"}},
+                {"type": "reply", "data": {"id": 99}},
+                {"type": "at", "data": {"qq": "3"}},
+            ],
+        }
+        ev = self.b._translate_message(payload)
+        self.assertEqual([s.type for s in ev.segments],
+                         ["image", "reply", "at"])
+        img = ev.segments[0]
+        self.assertEqual(img.data["file"], "/app/cache/1.jpg")
+        self.assertEqual(img.data["url"], "http://x/1.jpg")
+        self.assertEqual(ev.segments[1].data["id"], 99)
+
+    def test_notice_group_decrease_and_admin(self):
+        cases = [
+            {"post_type": "notice", "notice_type": "group_decrease",
+             "group_id": 1, "user_id": 2, "self_id": 740979632, "time": 1},
+            {"post_type": "notice", "notice_type": "group_admin",
+             "group_id": 1, "user_id": 2, "sub_type": "set",
+             "self_id": 740979632, "time": 1},
+        ]
+        ev = self.b._translate_generic(cases[0])
+        self.assertEqual(ev.type, "group_decrease")  # 语义化事件名
+        ev2 = self.b._translate_generic(cases[1])
+        self.assertEqual(ev2.type, "notice")
+
+    def test_request_add_group(self):
+        p = {"post_type": "request", "request_type": "group",
+             "group_id": 1, "user_id": 2, "self_id": 740979632, "time": 1}
+        ev = self.b._translate_generic(p)
+        self.assertEqual(ev.type, "request")
+
     def test_echo_is_not_event(self):
         # echo 响应不应触发事件（框架过滤）
         self.b._handle_message('{"echo":"x","status":"ok"}')
