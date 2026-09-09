@@ -8,132 +8,161 @@
           --muted:#7f8ea3; --accent:#6ea8fe; --ok:#3fb96f; --off:#5a6472; }
   * { box-sizing:border-box; margin:0; }
   body { background:var(--bg); color:var(--fg);
-         font:14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-         padding:24px; max-width:880px; margin:0 auto; }
-  h1 { font-size:18px; margin-bottom:4px; letter-spacing:.5px; }
-  .sub { color:var(--muted); margin-bottom:20px; font-size:12px; }
+         font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+         padding:24px; max-width:980px; margin:0 auto; }
+  h1 { font-size:18px; } .sub { color:var(--muted); font-size:12px; margin:4px 0 18px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
           padding:14px 16px; margin-bottom:14px; }
-  .stat { display:flex; gap:28px; flex-wrap:wrap; }
-  .stat b { font-size:20px; display:block; }
-  .stat span { color:var(--muted); font-size:12px; }
-  .dot { display:inline-block; width:9px; height:9px; border-radius:50%;
-         background:var(--off); margin-right:6px; vertical-align:middle; }
+  .acct { display:flex; align-items:center; gap:12px; padding:10px 2px;
+          border-bottom:1px solid var(--line); cursor:pointer; }
+  .acct:last-child { border-bottom:none; }
+  .acct.sel { background:#1e2632; border-radius:8px; padding:10px 8px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--off);
+         display:inline-block; margin-right:6px; }
   .dot.on { background:var(--ok); }
-  .pl { display:flex; justify-content:space-between; align-items:center;
-        padding:8px 2px; border-bottom:1px solid var(--line); }
+  .btn { background:var(--accent); color:#0b1220; border:none; border-radius:6px;
+         padding:4px 12px; cursor:pointer; font-weight:600; margin-left:auto; }
+  .btn.ghost { background:var(--off); color:#dbe4ee; }
+  button.mini { background:#3a4656; color:#cfd9e4; border:none; border-radius:5px;
+                padding:2px 8px; cursor:pointer; margin-left:6px; font-size:12px; }
+  .pl { display:flex; justify-content:space-between; padding:7px 2px;
+        border-bottom:1px solid var(--line); }
   .pl:last-child { border-bottom:none; }
-  .pl .name { font-weight:600; }
-  .pl .desc { color:var(--muted); font-size:12px; margin-top:1px; }
-  button { background:var(--accent); color:#0b1220; border:none; border-radius:6px;
-           padding:5px 14px; cursor:pointer; font-weight:600; }
-  button.off { background:var(--off); color:#dbe4ee; }
-  #logs { font-family:Consolas, monospace; font-size:12px; max-height:280px;
-          overflow:auto; }
+  .pl .n { font-weight:600; } .pl .d { color:var(--muted); font-size:12px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+  input { background:#10151d; border:1px solid var(--line); color:var(--fg);
+          border-radius:6px; padding:6px 8px; width:130px; }
+  input.wide { width:250px; }
+  #logs { font-family:Consolas,monospace; font-size:12px; max-height:240px; overflow:auto; }
   #logs .l { padding:2px 0; border-bottom:1px dashed #232c38; }
   .lvl-debug{color:#7f8ea3}.lvl-info{color:#d7e0ea}.lvl-warn{color:#e8b34b}
-  .lvl-error{color:#e86a5a}.lvl-fatal{color:#ff4d4d}
-  .muted { color:var(--muted); }
+  .lvl-error{color:#e86a5a}
+  .muted{color:var(--muted)} .hidden{display:none}
 </style>
 </head>
 <body>
   <h1>栖星 AsterCore</h1>
-  <div class="sub">内核 Web 面板雏形（v0.1）· 单端口 JSON API</div>
+  <div class="sub">多账号面板 · 单端口 JSON API（v0.2）</div>
 
   <div class="card">
-    <div class="stat">
-      <div><b id="acct">-</b><span>账号</span></div>
-      <div><b id="backend">-</b><span>后端</span></div>
-      <div><b id="plcount">-</b><span>插件数</span></div>
-      <div><b><span id="bstatus" class="dot"></span><span id="bstext">-</span></b><span>后端状态</span></div>
+    <div style="display:flex;justify-content:space-between">
+      <b>账号</b>
+      <button class="btn" onclick="showNew()">+ 新建账号</button>
     </div>
+    <div id="newform" class="hidden" style="margin-top:10px">
+      <div class="row">
+        <input id="n_id" placeholder="账号ID（QQ）">
+        <input id="n_name" placeholder="显示名">
+        <input id="n_ws" class="wide" placeholder="WS 地址" value="ws://127.0.0.1:3001">
+        <input id="n_http" class="wide" placeholder="HTTP（可选）" value="http://127.0.0.1:3000">
+        <input id="n_token" class="wide" placeholder="access_token（可选）">
+        <button class="btn" onclick="createAcct()">保存</button>
+        <button class="mini" onclick="hideNew()">取消</button>
+      </div>
+    </div>
+    <div id="accts">加载中…</div>
   </div>
 
   <div class="card">
-    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-      <b>插件</b><button onclick="reloadPlugins()">重扫插件</button>
-    </div>
-    <div id="plugins">加载中…</div>
+    <b>插件</b> <span class="muted" id="curAcct"></span>
+    <div id="plugins">（先启动/选择账号）</div>
   </div>
 
   <div class="card">
-    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-      <b>实时日志</b><button onclick="clearLogs()">清空视图</button>
-    </div>
+    <div style="display:flex;justify-content:space-between"><b>实时日志</b>
+      <button class="mini" onclick="$('#logs').innerHTML=''">清空</button></div>
     <div id="logs"></div>
   </div>
 
 <script>
 const $ = s => document.querySelector(s);
-let lastTs = 0;
+let cur = null, lastTs = 0;
+const j = (u, o) => fetch(u, o).then(r => r.json());
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-async function j(url, opt) {
-  const r = await fetch(url, opt);
-  return r.json();
-}
-
-async function loadStatus() {
-  const s = await j('/api/status');
+async function loadAccounts() {
+  const s = await j('/api/accounts');
   if (!s.ok) return;
-  const d = s.data;
-  $('#acct').textContent = d.account_id;
-  $('#backend').textContent = d.backend;
-  $('#plcount').textContent = d.plugin_count;
-  $('#bstatus').className = 'dot' + (d.backend_running ? ' on' : '');
-  $('#bstext').textContent = d.backend_running ? '运行中' : '未运行';
-}
-
-async function loadPlugins() {
-  const s = await j('/api/plugins');
-  if (!s.ok) return;
-  $('#plugins').innerHTML = s.data.map(p => `
-    <div class="pl">
-      <div><div class="name">${p.name_cn || p.name}
-        <span class="muted" style="font-weight:400">v${p.version}</span></div>
-        <div class="desc">${p.description || ''}</div></div>
-      <button class="${p.enabled?'':'off'}" onclick="toggle('${p.name}', ${p.enabled})">
-        ${p.enabled?'停用':'启用'}</button>
+  $('#accts').innerHTML = s.data.map(a => `
+    <div class="acct ${cur===a.account_id?'sel':''}" onclick="pick('${a.account_id}')">
+      <span class="dot ${a.running?'on':''}"></span>
+      <b>${esc(a.display_name)}</b>
+      <span class="muted">${a.account_id}</span>
+      <span class="muted">${a.backend_name}${a.running?' · 运行中':' · 未运行'}</span>
+      <span style="margin-left:auto">
+        <button class="mini" onclick="event.stopPropagation();toggleAcct('${a.account_id}',${a.running})">${a.running?'停止':'启动'}</button>
+        <button class="mini" onclick="event.stopPropagation();delAcct('${a.account_id}')">删除</button>
+      </span>
     </div>`).join('');
 }
 
-async function toggle(name, enabled) {
-  await j(`/api/plugins/${name}/${enabled?'disable':'enable'}`, {method:'POST'});
-  await loadPlugins();
+async function pick(id) {
+  cur = id;
+  $('#curAcct').textContent = '· 账号 ' + id;
+  const st = await j(`/api/accounts/${id}/status`);
+  if (!st.data.running) { $('#plugins').innerHTML='<span class="muted">账号未运行</span>'; return; }
+  const s = await j(`/api/accounts/${id}/plugins`);
+  $('#plugins').innerHTML = s.data.map(p => `
+    <div class="pl"><div><span class="n">${esc(p.name_cn||p.name)}</span>
+      <span class="muted"> v${p.version}</span>
+      <div class="d">${esc(p.description||'')}</div></div>
+      <button class="mini" onclick="togglePl('${id}','${p.name}',${p.enabled})">${p.enabled?'停用':'启用'}</button>
+    </div>`).join('');
 }
 
-async function reloadPlugins() {
-  await j('/api/plugins/reload', {method:'POST'});
-  await loadPlugins();
-  await loadStatus();
+async function toggleAcct(id, running) {
+  await j(`/api/accounts/${id}/${running?'stop':'start'}`, {method:'POST'});
+  if (!running) cur = id;
+  await loadAccounts(); if (cur) await pick(cur);
+}
+
+async function delAcct(id) {
+  if (!confirm('删除账号 '+id+'（含数据目录）？')) return;
+  await j(`/api/accounts/${id}/delete`, {method:'POST'});
+  if (cur===id) cur=null;
+  await loadAccounts();
+}
+
+async function togglePl(aid, name, enabled) {
+  await j(`/api/accounts/${aid}/plugins/${name}/${enabled?'disable':'enable'}`, {method:'POST'});
+  await pick(aid);
+}
+
+function showNew(){ $('#newform').classList.remove('hidden'); }
+function hideNew(){ $('#newform').classList.add('hidden'); }
+
+async function createAcct() {
+  const body = {
+    account_id: $('#n_id').value.trim(),
+    display_name: $('#n_name').value.trim() || $('#n_id').value.trim(),
+    backend: { name: 'onebot', ws_url: $('#n_ws').value.trim(),
+               http_url: $('#n_http').value.trim(), access_token: $('#n_token').value.trim() },
+  };
+  const r = await j('/api/accounts', {method:'POST', headers:{'Content-Type':'application/json'},
+                                      body: JSON.stringify(body)});
+  if (!r.ok) { alert('创建失败: '+(r.error||'')); return; }
+  hideNew(); await loadAccounts();
 }
 
 async function pollLogs() {
-  const s = await j('/api/logs?after=' + lastTs);
+  if (!cur) return;
+  const s = await j(`/api/accounts/${cur}/logs?after=${lastTs}`);
   if (s.ok && s.data.logs.length) {
-    const box = $('#logs');
     for (const e of s.data.logs) {
       lastTs = Math.max(lastTs, e.ts);
-      const t = new Date(e.ts * 1000).toTimeString().slice(0, 8);
-      const div = document.createElement('div');
-      div.className = 'l';
-      div.innerHTML = `<span class="muted">${t}</span>
-        <span class="lvl-${e.level}">[${e.level}]</span>
-        <span class="muted">${e.source}</span> | ${escapeHtml(e.msg)}`;
-      box.appendChild(div);
+      const t = new Date(e.ts*1000).toTimeString().slice(0,8);
+      const d = document.createElement('div'); d.className='l';
+      d.innerHTML = `<span class="muted">${t}</span> <span class="lvl-${e.level}">[${e.level}]</span>
+        <span class="muted">${esc(e.source)}</span> | ${esc(e.msg)}`;
+      $('#logs').appendChild(d);
     }
-    box.scrollTop = box.scrollHeight;
+    $('#logs').scrollTop = $('#logs').scrollHeight;
   }
 }
 
-function clearLogs() { $('#logs').innerHTML=''; }
-
-function escapeHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-(async function init() {
-  await loadStatus();
-  await loadPlugins();
+(async function init(){
+  await loadAccounts();
+  setInterval(async () => { await loadAccounts(); }, 3000);
   setInterval(pollLogs, 1000);
 })();
 </script>

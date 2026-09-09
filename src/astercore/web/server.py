@@ -8,6 +8,8 @@ import asyncio
 import logging
 import threading
 from pathlib import Path
+
+from astercore.core.manager import AccountConfig
 from typing import Any, Awaitable, Callable
 
 log = logging.getLogger("astercore.web")
@@ -150,3 +152,131 @@ def serve_in_background(panel: WebPanel, host: str = "127.0.0.1",
                          daemon=True, name="astercore-web")
     t.start()
     return t
+
+
+class ManagerWebPanel:
+    """多账号面板：管理 AccountManager 中的所有账号。
+
+    manager: AccountManager
+    loop_provider: () -> 主事件循环（manager.start 等协程在此 loop 执行）
+    """
+
+    def __init__(self, manager, loop_provider, static_dir=None) -> None:
+        if Flask is None:
+            raise RuntimeError("需要 Flask：pip install astercore[web]")
+        self.manager = manager
+        self._loop_provider = loop_provider
+        self.static_dir = Path(static_dir) if static_dir else Path(__file__).parent / "static"
+        self.app = Flask("astercore-web", static_folder=str(self.static_dir),
+                         static_url_path="/assets")
+        self._routes()
+
+    def _loop(self):
+        try:
+            return self._loop_provider()
+        except Exception:
+            return None
+
+    def _routes(self) -> None:
+        app = self.app
+        mgr = self.manager
+
+        @app.get("/")
+        def index():
+            return send_from_directory(self.static_dir, "index.html")
+
+        # ---------- 账号 ----------
+        @app.get("/api/accounts")
+        def api_accounts():
+            return _ok(mgr.scan())
+
+        @app.post("/api/accounts")
+        def api_create_account():
+            d = request.get_json(force=True, silent=True) or {}
+            account_id = str(d.get("account_id") or "").strip()
+            if not account_id:
+                return _err("缺少 account_id", 400)
+            b = d.get("backend") or {}
+            cfg = AccountConfig(
+                account_id=account_id,
+                display_name=str(d.get("display_name") or account_id),
+                backend_name=str(b.get("name") or "onebot"),
+                ws_url=str(b.get("ws_url") or "ws://127.0.0.1:3001"),
+                http_url=str(b.get("http_url") or "http://127.0.0.1:3000"),
+                access_token=str(b.get("access_token") or ""),
+            )
+            mgr.save_config(cfg)
+            return _ok({"account_id": account_id})
+
+        @app.post("/api/accounts/<aid>/start")
+        def api_start(aid: str):
+            try:
+                rt = run_coro_sync(self._loop(), mgr.start(aid))
+            except KeyError:
+                return _err("账号未配置", 404)
+            except Exception as e:
+                return _err(f"启动失败: {e}", 500)
+            return _ok({"running": rt.backend.running})
+
+        @app.post("/api/accounts/<aid>/stop")
+        def api_stop(aid: str):
+            run_coro_sync(self._loop(), mgr.stop(aid))
+            return _ok({"stopped": True})
+
+        @app.post("/api/accounts/<aid>/delete")
+        def api_delete(aid: str):
+            mgr.remove(aid)
+            return _ok({"deleted": True})
+
+        # ---------- 账号内：插件 / 日志 ----------
+        def _rt_of(aid: str):
+            rt = mgr.runtimes.get(aid)
+            return rt
+
+        @app.get("/api/accounts/<aid>/status")
+        def api_account_status(aid: str):
+            rt = _rt_of(aid)
+            if rt is None:
+                return _ok({"running": False})
+            return _ok({"running": True, "backend": rt.backend.name,
+                        "plugin_count": len(rt.list_plugins()),
+                        "account_id": str(rt.account_id)})
+
+        @app.get("/api/accounts/<aid>/plugins")
+        def api_account_plugins(aid: str):
+            rt = _rt_of(aid)
+            return _ok(rt.list_plugins()) if rt else _err("账号未运行", 404)
+
+        @app.post("/api/accounts/<aid>/plugins/<name>/enable")
+        def api_acct_plugin_enable(aid: str, name: str):
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            ok = run_coro_sync(self._loop(), rt.enable_plugin(name))
+            return _ok({"enabled": ok}) if ok else _err("插件不存在", 404)
+
+        @app.post("/api/accounts/<aid>/plugins/<name>/disable")
+        def api_acct_plugin_disable(aid: str, name: str):
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            ok = run_coro_sync(self._loop(), rt.disable_plugin(name))
+            return _ok({"disabled": ok}) if ok else _err("插件不存在", 404)
+
+        @app.get("/api/accounts/<aid>/logs")
+        def api_acct_logs(aid: str):
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            try:
+                after = float(request.args.get("after", 0))
+            except (TypeError, ValueError):
+                after = 0.0
+            limit = min(int(request.args.get("limit", 200)), 2000)
+            items = rt.recent_logs(limit)
+            if after > 0:
+                items = [e for e in items if e["ts"] > after]
+            return _ok({"logs": items})
+
+    def serve(self, host: str = "127.0.0.1", port: int = 8080) -> None:
+        self.app.run(host=host, port=port, threaded=True, use_reloader=False)
