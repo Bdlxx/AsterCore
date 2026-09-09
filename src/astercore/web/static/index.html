@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>栖星 AsterCore · 面板</title>
+<style>
+  :root { --bg:#14181f; --card:#1d232c; --line:#2a3340; --fg:#d7e0ea;
+          --muted:#7f8ea3; --accent:#6ea8fe; --ok:#3fb96f; --off:#5a6472; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg);
+         font:14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+         padding:24px; max-width:880px; margin:0 auto; }
+  h1 { font-size:18px; margin-bottom:4px; letter-spacing:.5px; }
+  .sub { color:var(--muted); margin-bottom:20px; font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:14px 16px; margin-bottom:14px; }
+  .stat { display:flex; gap:28px; flex-wrap:wrap; }
+  .stat b { font-size:20px; display:block; }
+  .stat span { color:var(--muted); font-size:12px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%;
+         background:var(--off); margin-right:6px; vertical-align:middle; }
+  .dot.on { background:var(--ok); }
+  .pl { display:flex; justify-content:space-between; align-items:center;
+        padding:8px 2px; border-bottom:1px solid var(--line); }
+  .pl:last-child { border-bottom:none; }
+  .pl .name { font-weight:600; }
+  .pl .desc { color:var(--muted); font-size:12px; margin-top:1px; }
+  button { background:var(--accent); color:#0b1220; border:none; border-radius:6px;
+           padding:5px 14px; cursor:pointer; font-weight:600; }
+  button.off { background:var(--off); color:#dbe4ee; }
+  #logs { font-family:Consolas, monospace; font-size:12px; max-height:280px;
+          overflow:auto; }
+  #logs .l { padding:2px 0; border-bottom:1px dashed #232c38; }
+  .lvl-debug{color:#7f8ea3}.lvl-info{color:#d7e0ea}.lvl-warn{color:#e8b34b}
+  .lvl-error{color:#e86a5a}.lvl-fatal{color:#ff4d4d}
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+  <h1>栖星 AsterCore</h1>
+  <div class="sub">内核 Web 面板雏形（v0.1）· 单端口 JSON API</div>
+
+  <div class="card">
+    <div class="stat">
+      <div><b id="acct">-</b><span>账号</span></div>
+      <div><b id="backend">-</b><span>后端</span></div>
+      <div><b id="plcount">-</b><span>插件数</span></div>
+      <div><b><span id="bstatus" class="dot"></span><span id="bstext">-</span></b><span>后端状态</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+      <b>插件</b><button onclick="reloadPlugins()">重扫插件</button>
+    </div>
+    <div id="plugins">加载中…</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+      <b>实时日志</b><button onclick="clearLogs()">清空视图</button>
+    </div>
+    <div id="logs"></div>
+  </div>
+
+<script>
+const $ = s => document.querySelector(s);
+let lastTs = 0;
+
+async function j(url, opt) {
+  const r = await fetch(url, opt);
+  return r.json();
+}
+
+async function loadStatus() {
+  const s = await j('/api/status');
+  if (!s.ok) return;
+  const d = s.data;
+  $('#acct').textContent = d.account_id;
+  $('#backend').textContent = d.backend;
+  $('#plcount').textContent = d.plugin_count;
+  $('#bstatus').className = 'dot' + (d.backend_running ? ' on' : '');
+  $('#bstext').textContent = d.backend_running ? '运行中' : '未运行';
+}
+
+async function loadPlugins() {
+  const s = await j('/api/plugins');
+  if (!s.ok) return;
+  $('#plugins').innerHTML = s.data.map(p => `
+    <div class="pl">
+      <div><div class="name">${p.name_cn || p.name}
+        <span class="muted" style="font-weight:400">v${p.version}</span></div>
+        <div class="desc">${p.description || ''}</div></div>
+      <button class="${p.enabled?'':'off'}" onclick="toggle('${p.name}', ${p.enabled})">
+        ${p.enabled?'停用':'启用'}</button>
+    </div>`).join('');
+}
+
+async function toggle(name, enabled) {
+  await j(`/api/plugins/${name}/${enabled?'disable':'enable'}`, {method:'POST'});
+  await loadPlugins();
+}
+
+async function reloadPlugins() {
+  await j('/api/plugins/reload', {method:'POST'});
+  await loadPlugins();
+  await loadStatus();
+}
+
+async function pollLogs() {
+  const s = await j('/api/logs?after=' + lastTs);
+  if (s.ok && s.data.logs.length) {
+    const box = $('#logs');
+    for (const e of s.data.logs) {
+      lastTs = Math.max(lastTs, e.ts);
+      const t = new Date(e.ts * 1000).toTimeString().slice(0, 8);
+      const div = document.createElement('div');
+      div.className = 'l';
+      div.innerHTML = `<span class="muted">${t}</span>
+        <span class="lvl-${e.level}">[${e.level}]</span>
+        <span class="muted">${e.source}</span> | ${escapeHtml(e.msg)}`;
+      box.appendChild(div);
+    }
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+function clearLogs() { $('#logs').innerHTML=''; }
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+(async function init() {
+  await loadStatus();
+  await loadPlugins();
+  setInterval(pollLogs, 1000);
+})();
+</script>
+</body>
+</html>
