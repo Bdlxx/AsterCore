@@ -76,6 +76,12 @@ async def amain(args: argparse.Namespace) -> int:
     url = f"http://127.0.0.1:{args.port}"
     print(f"[launch] Web 面板: {url}")
 
+    if args.shell:
+        from astercore.shell import ShellApp
+        shell = ShellApp(url, on_quit=lambda: None)
+        shell.open_panel()  # 阻塞（内嵌或浏览器）
+        await mgr.stop_all()
+        return 0
     if not args.no_browser:
         import threading
         threading.Timer(0.8, _open_browser, args=(url,)).start()
@@ -103,6 +109,8 @@ def main() -> None:
     ap.add_argument("--accounts-dir", default="accounts")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--shell", action="store_true",
+                    help="桌面壳模式：pywebview 内嵌窗口(可装[desktop]后体验)；否则系统浏览器")
     args = ap.parse_args()
     try:
         sys.exit(asyncio.run(amain(args)))
