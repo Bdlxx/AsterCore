@@ -123,7 +123,8 @@ class AccountManager:
             account_id=account_id,
             data_dir=self.data_root / str(account_id),
             backend=backend,
-            plugin_dir=self.plugin_dir or (self.accounts_dir / account_id / "plugins"),
+            # 插件目录：显式指定优先；否则默认 data/<id>/plugins（与 runtime 一致）
+            plugin_dir=self.plugin_dir,
         )
         await rt.start()
         self.runtimes[account_id] = rt

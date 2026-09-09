@@ -31,7 +31,7 @@ NAP_EXPORT int nap_plugin_on_event(const char* event_json) {
     if (!strstr(event_json, "\"type\":\"message\"")) return 0;
     const char* raw = strstr(event_json, "\"raw\":\"");
     if (!raw) return 0;
-    raw += 6;  // 跳过 "raw":"
+    raw += sizeof("\"raw\":\"") - 1;  // 跳过 "raw":  （7 字节）
     const char* end = strchr(raw, '"');
     std::string text(raw, end ? end - raw : 0);
     if (text.find("点歌") == std::string::npos) return 0;
