@@ -62,8 +62,37 @@ class Backend(ABC):
 
     # ---- 工具 ----
     def _emit(self, ev: Event) -> None:
-        if self.on_event:
-            self.on_event(ev)
+        """把事件投递给内核回调。回调可能是 async（runtime._on_event），
+        而本方法可能在 WS 线程被调用 → 用 run_coroutine_threadsafe 投到主循环。"""
+        if not self.on_event:
+            return
+        import asyncio
+        ret = self.on_event(ev)
+        if asyncio.iscoroutine(ret):
+            loop = getattr(self, "_loop", None) or self._main_loop
+            if loop is None or not loop.is_running():
+                # 兜底：在当前运行 loop 中调度（单测等场景）
+                try:
+                    asyncio.get_running_loop().create_task(ret)
+                except RuntimeError:
+                    pass
+                return
+            try:
+                asyncio.run_coroutine_threadsafe(ret, loop)
+            except Exception:
+                pass
+            return
+        # 同步回调直接调用
+        ret() if callable(ret) else None
+
+    # 供子类设置主事件循环（start 时记录）
+    @property
+    def _main_loop(self):
+        import asyncio
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return None
 
 
 class BackendRegistry:

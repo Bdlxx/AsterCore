@@ -107,7 +107,7 @@ async def amain(args: argparse.Namespace) -> int:
         await _run_dry(rt, args.account)
         return 0
 
-    print(f"[info] 启动账号 {args.account}（backend={rt.backend.name} ws={rt.cfg.ws_url}）")
+    print(f"[info] 启动账号 {args.account}（backend={rt.backend.name} ws={rt.backend.cfg.ws_url}）")
     await rt.start()
 
     if args.serve:
