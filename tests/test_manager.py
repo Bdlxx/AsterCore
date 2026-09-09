@@ -54,6 +54,12 @@ class ManagerTest(unittest.TestCase):
         with self.assertRaises(KeyError):
             _run(self.mgr.start("nope"))
 
+    def test_remove_async(self):
+        self.mgr.save_config(AccountConfig("30001", backend_name="null"))
+        _run(self.mgr.start("30001"))
+        _run(self.mgr.remove("30001"))
+        self.assertNotIn("30001", [a["account_id"] for a in self.mgr.scan()])
+
 
 if __name__ == "__main__":
     unittest.main()

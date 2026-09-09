@@ -99,9 +99,9 @@ class AccountManager:
                      encoding="utf-8")
         return p
 
-    def remove(self, account_id: str) -> None:
-        """停掉并从目录移除（可再配 --keep-data 之类；v0.1 简单移除目录）"""
-        asyncio.get_event_loop().run_until_complete(self.stop(account_id))
+    async def remove(self, account_id: str) -> None:
+        """停掉并从目录移除"""
+        await self.stop(account_id)
         import shutil
         shutil.rmtree(self.accounts_dir / account_id, ignore_errors=True)
 

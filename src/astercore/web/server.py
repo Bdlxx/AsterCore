@@ -232,7 +232,7 @@ class ManagerWebPanel:
 
         @app.post("/api/accounts/<aid>/delete")
         def api_delete(aid: str):
-            mgr.remove(aid)
+            run_coro_sync(self._loop(), mgr.remove(aid))
             return _ok({"deleted": True})
 
         @app.get("/api/accounts/<aid>/check")
