@@ -21,3 +21,4 @@ runtime.json
 # 打包缓存
 updater/tmp/
 updater/backup/
+docs/Windows版开发计划书.md
