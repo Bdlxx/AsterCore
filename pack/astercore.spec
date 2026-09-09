@@ -3,6 +3,12 @@ from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = []
 hiddenimports += collect_submodules('astercore')
+# 桌面壳可选依赖（装了才收集：pywebview 内嵌窗口 / pystray 托盘 / PIL 图标）
+for _opt in ('webview', 'pystray', 'PIL'):
+    try:
+        hiddenimports += collect_submodules(_opt)
+    except Exception:
+        pass
 
 
 import os

@@ -82,7 +82,8 @@ async def amain(args: argparse.Namespace) -> int:
         shell.open_panel()  # 阻塞（内嵌或浏览器）
         await mgr.stop_all()
         return 0
-    if not args.no_browser:
+    import os as _os
+    if not args.no_browser and not _os.environ.get('ASTER_NO_OPEN'):
         import threading
         threading.Timer(0.8, _open_browser, args=(url,)).start()
     try:

@@ -166,6 +166,11 @@ async def amain(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    # 无参数（双击 exe / python -m astercore）→ 桌面模式：启动器（向导+账号+面板+开浏览器）
+    if len(sys.argv) <= 1:
+        from astercore.launch import main as launch_main
+        launch_main()   # 内部 sys.exit
+        return
     args = _build_parser().parse_args()
     try:
         sys.exit(asyncio.run(amain(args)))
