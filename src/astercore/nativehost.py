@@ -9,6 +9,7 @@ import json
 import logging
 import subprocess
 import sys
+import time
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -37,13 +38,23 @@ class NativeHostProxy:
 
     def __init__(self, lib_path: str | Path, action_cb,
                  host_args: list[str] | None = None,
-                 loop: Any | None = None) -> None:
-        """action_cb 可为同步函数或 async（awaitable）"""
+                 loop: Any | None = None,
+                 auto_restart: bool = True,
+                 restart_attempts: int = 3) -> None:
+        """action_cb 可为同步函数或 async（awaitable）。
+
+        auto_restart: host 意外退出时指数退避自动重启（0.5s/1s/1.5s…），
+        达到 restart_attempts 仍失败则标记 _crashed（上层可禁用插件）。"""
         self.lib_path = Path(lib_path)
         self._action_cb = action_cb
         self._host_args = host_args or []
         self._loop = loop
         self._send_lock = threading.Lock()
+        self._auto_restart = auto_restart
+        self._restart_attempts = max(1, restart_attempts)
+        self._init_config: dict[str, Any] = {}
+        self.crash_count = 0
+        self._crashed = False
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._pending_results: dict[int, dict] = {}
@@ -60,6 +71,10 @@ class NativeHostProxy:
         with self._lock:
             if self._proc is not None:
                 return
+            # 新进程启动前清空旧状态（否则 wait_ready 会误用上次崩溃的 exit_code）
+            self.exit_code = None
+            self._ready = False
+            self._crashed = False
             cmd = [sys.executable, "-m", "astercore.host",
                    "--lib", str(self.lib_path), *self._host_args]
             self._proc = subprocess.Popen(
@@ -83,6 +98,33 @@ class NativeHostProxy:
             __import__("time").sleep(0.05)
         raise HostCrashError("plugin-host ready 超时")
 
+    def _restart_worker(self) -> None:
+        """指数退避重启 host；成功则继续服务，达上限标记崩溃"""
+        for i in range(self._restart_attempts):
+            if self._stopping:
+                return
+            delay = 0.5 * (i + 1)
+            log.info("host %s %s后重启 (第%d/%d次)", self.lib_path.name,
+                     delay, i + 1, self._restart_attempts)
+            time.sleep(delay)
+            if self._stopping:
+                return
+            with self._lock:
+                self._proc = None
+                self._ready = False
+            try:
+                self._start_and_init(dict(self._init_config))
+            except Exception as e:
+                log.warning("host 重启失败 (%s)", e)
+                continue
+            self.crash_count += 1
+            log.info("host %s 已自动重启（累计崩溃 %d 次）",
+                     self.lib_path.name, self.crash_count)
+            return
+        log.error("host %s 连续 %d 次重启失败，标记崩溃（可由上层禁用）",
+                  self.lib_path.name, self._restart_attempts)
+        self._crashed = True
+
     def stop(self) -> None:
         self._stopping = True
         proc = self._proc
@@ -101,9 +143,20 @@ class NativeHostProxy:
     # ---------- 与 NativePlugin 同构接口 ----------
     def init(self, config: dict[str, Any]) -> None:
         """start + init + 等 ready"""
+        self._init_config = config or {}
+        self._start_and_init(self._init_config)
+
+    def _start_and_init(self, cfg: dict[str, Any]) -> None:
         self.start()
-        self._send({"type": "init", "config": config or {}})
-        self.wait_ready()
+        self._send({"type": "init", "config": cfg})
+        try:
+            self.wait_ready()
+        except HostCrashError:
+            # 清理半启动状态（供重启重试）
+            with self._lock:
+                self._proc = None
+                self._ready = False
+            raise
 
     async def handle_event_async(self, ev: dict) -> bool:
         """发事件给 host，异步等待 handled 帧（不阻塞事件循环）。"""
@@ -176,7 +229,11 @@ class NativeHostProxy:
         finally:
             rc = proc.poll()
             self.exit_code = rc
+            self._crashed = False
             log.warning("plugin-host 退出 code=%s", rc)
+            if not self._stopping and self._auto_restart:
+                threading.Thread(target=self._restart_worker, daemon=True,
+                                 name=f"host-restart-{self.lib_path.name}").start()
 
     def _on_frame(self, frame: dict) -> None:
         t = frame.get("type")
