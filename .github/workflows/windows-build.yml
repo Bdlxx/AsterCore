@@ -1,0 +1,45 @@
+# 栖星 AsterCore · Windows 构建（GitHub Actions）
+# 触发：push 打 v* 标签 或 手动（workflow_dispatch）
+# 产物：dist/AsterCore-win64-<ver>.zip（主程序 onedir，不含 accounts/data）
+
+name: windows-build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[web]"
+          pip install pyinstaller
+
+      - name: Build exe (onedir)
+        run: |
+          python -m PyInstaller pack/astercore.spec --noconfirm --clean
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $ver = if ("$env:GITHUB_REF_NAME" -match "^v") { "$env:GITHUB_REF_NAME" } else { "dev" }
+          $zip = "AsterCore-win64-$ver.zip"
+          Compress-Archive -Path dist/astercore/* -DestinationPath $zip -Force
+          echo "ZIP_NAME=$zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AsterCore-win64
+          path: AsterCore-win64-*.zip
+          if-no-files-found: error
