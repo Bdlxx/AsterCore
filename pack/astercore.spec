@@ -18,7 +18,9 @@ a = Analysis(
     [os.path.join(BASE, 'src/astercore/__main__.py')],
     pathex=[os.path.join(BASE, 'src')],
         binaries=[],
-    datas=[],
+    # Web 面板静态资源（index.html）必须打进包，否则 Flask 404
+    datas=[(os.path.join(BASE, 'src', 'astercore', 'web', 'static'),
+            'astercore/web/static')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
