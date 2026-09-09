@@ -12,6 +12,7 @@ from typing import Any, Callable
 from .backend import Backend
 from .bus import EventBus, PluginLoader
 from .models import ActionResult, Event, seg_text
+from .logring import install as install_logring, ring as _ring
 from .plugin import Plugin, PluginContext
 
 log = logging.getLogger("astercore.runtime")
@@ -40,6 +41,11 @@ class AccountRuntime:
         self.plugin_loader = PluginLoader(self.plugin_dir or self.data_dir / "plugins")
         self.bus = EventBus()
         self.backend.on_event = self._on_event
+        install_logring()  # 内核日志接入环形缓冲（幂等）
+
+    # ---- 日志（面板实时读取） ----
+    def recent_logs(self, limit: int = 100) -> list[dict]:
+        return _ring.recent(limit)
 
     # ---- 生命周期 ----
     async def start(self) -> None:

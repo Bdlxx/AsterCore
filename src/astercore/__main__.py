@@ -71,6 +71,11 @@ async def _run_dry(rt: AccountRuntime, account: str) -> None:
     print(f"[模拟] 非关键词事件链结果: {result2}")
     await rt.stop()
     print("\nDry-run 通过：插件加载/激活注入 ctx/事件分发/发送链路均正常。")
+    # 演示结构化日志环（面板实时日志的前置能力）
+    logs = rt.recent_logs(10)
+    print(f"[info] 日志环已记录 {len(logs)} 条；最近 3 条：")
+    for e in logs[-3:]:
+        print(f"       {e['ts']:.1f} [{e['level']}] {e['source']} | {e['msg'][:60]}")
 
 
 async def amain(args: argparse.Namespace) -> int:
