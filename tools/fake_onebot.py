@@ -51,10 +51,23 @@ class FakeOneBot:
             print(f"[fake-onebot] API: {action} "
                   f"{json.dumps(params, ensure_ascii=False)[:150]}", flush=True)
             ok = self.expect is None or action in self.expect
+            data = {"fake": True, "action": action, "params": params}
+            # 群列表 / 群成员假数据（供面板调试台演示）
+            if action == "get_group_list":
+                data = [{"group_id": 987654321, "group_name": "假群·测试A",
+                         "member_count": 10},
+                        {"group_id": 555111222, "group_name": "假群·测试B",
+                         "member_count": 3}]
+            elif action == "get_group_member_list":
+                data = [{"user_id": 555000111, "nickname": "群友甲",
+                         "card": "甲"},
+                        {"user_id": 10001, "nickname": "群友乙"}]
+            elif action == "get_login_info":
+                data = {"user_id": int(self.self_id), "nickname": "假Bot"}
             await ws.send_str(json.dumps({
                 "status": "ok" if ok else "failed",
                 "retcode": 0 if ok else -1,
-                "data": {"fake": True, "action": action, "params": params},
+                "data": data,
                 "message": "" if ok else f"unexpected action {action}",
                 "echo": echo,
             }))

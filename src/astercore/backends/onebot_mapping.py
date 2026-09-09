@@ -20,6 +20,9 @@ def map_action(action: str, params: dict[str, Any]) -> dict[str, Any] | None:
         "get_group_members": ("get_group_member_list", ["group_id"]),
         "get_group_info": ("get_group_info", ["group_id"]),
         "get_stranger_info": ("get_stranger_info", ["user_id"]),
+        "get_group_list": ("get_group_list", []),
+        "get_friend_list": ("get_friend_list", []),
+        "get_login_info": ("get_login_info", []),
         "upload_file": ("upload_group_file" if params.get("target", {}).get("type") == "group"
                         else "upload_private_file", None),
     }

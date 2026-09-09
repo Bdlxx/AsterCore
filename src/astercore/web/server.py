@@ -322,6 +322,39 @@ class ManagerWebPanel:
             n = run_coro_sync(self._loop(), rt.reload_plugins(name))
             return _ok({"plugin_count": n})
 
+        @app.get("/api/accounts/<aid>/groups")
+        def api_acct_groups(aid: str):
+            """群列表（调试台）：调 backend get_group_list"""
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            res = run_coro_sync(self._loop(), rt.action("get_group_list", {}), timeout=8)
+            return _ok(res.data if res.ok else [])
+
+        @app.post("/api/accounts/<aid>/send")
+        def api_acct_send(aid: str):
+            """调试台发消息：{group_id 或 user_id, text}"""
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            d = request.get_json(force=True, silent=True) or {}
+            text = str(d.get("text") or "").strip()
+            if not text:
+                return _err("缺少 text", 400)
+            if d.get("group_id"):
+                res = run_coro_sync(self._loop(), rt.action(
+                    "send_group", {"group_id": d["group_id"],
+                                   "message": [{"type": "text", "data": {"text": text}}]}),
+                    timeout=10)
+            elif d.get("user_id"):
+                res = run_coro_sync(self._loop(), rt.action(
+                    "send_private", {"user_id": d["user_id"],
+                                     "message": [{"type": "text", "data": {"text": text}}]}),
+                    timeout=10)
+            else:
+                return _err("缺少 group_id 或 user_id", 400)
+            return _ok(res.to_dict() if hasattr(res, "to_dict") else res)
+
         @app.get("/api/accounts/<aid>/logs")
         def api_acct_logs(aid: str):
             rt = _rt_of(aid)
