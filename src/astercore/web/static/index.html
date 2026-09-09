@@ -201,12 +201,23 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 async function loadAccounts() {
   const s = await j('/api/accounts');
   if (!s.ok) return;
+  for (const a of s.data) {
+    if (a.running) {
+      j(`/api/accounts/${a.account_id}/status`).then(st => {
+        if (st.ok) {
+          const el = document.getElementById('st-'+a.account_id);
+          if (el) el.textContent = '· 运行中' + (st.data.connected?'':' (连接中)');
+        }
+      });
+    }
+  }
   $('#accts').innerHTML = s.data.map(a => `
     <div class="acct ${cur===a.account_id?'sel':''}" onclick="pick('${a.account_id}')">
       <span class="dot ${a.running?'on':''}"></span>
       <b>${esc(a.display_name)}</b>
       <span class="muted">${a.account_id}</span>
-      <span class="muted">${a.backend_name}${a.running?' · 运行中':' · 未运行'}</span>
+      <span class="muted" id="st-${a.account_id}">${a.running?'· 运行中':'· 未运行'}</span>
+      <span class="muted">${a.backend_name}</span>
       <span style="margin-left:auto">
         <button class="mini" onclick="event.stopPropagation();toggleAcct('${a.account_id}',${a.running})">${a.running?'停止':'启动'}</button>
         <button class="mini" onclick="event.stopPropagation();editAcct('${a.account_id}','${a.backend_name}')">编辑</button>

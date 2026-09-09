@@ -71,15 +71,22 @@ class OneBotV11Backend(Backend):
             headers["Authorization"] = f"Bearer {self.cfg.access_token}"
 
         def _on_open(ws):  # noqa: ANN001
+            self.connected = True
+            self.last_error = ""
             log.info("OneBot WS 已连接: %s", self.cfg.ws_url)
 
         def _on_message(ws, message):  # noqa: ANN001
             self._handle_message(str(message))
 
         def _on_error(ws, error):  # noqa: ANN001
+            self.connected = False
+            self.last_error = str(error)[:200]
             log.warning("OneBot WS 错误: %s", error)
 
         def _on_close(ws, code, msg):  # noqa: ANN001
+            self.connected = False
+            if code not in (None, 1000) or msg:
+                self.last_error = f"closed({code} {msg})"[:200]
             log.info("OneBot WS 关闭 (%s %s)", code, msg)
 
         self._ws = websocket.WebSocketApp(
@@ -132,6 +139,8 @@ class OneBotV11Backend(Backend):
 
     # ---------------- 消息处理 ----------------
     def _handle_message(self, message: str) -> None:
+        import time as _t
+        self.last_event_at = _t.time()
         try:
             payload = json.loads(message)
         except json.JSONDecodeError:

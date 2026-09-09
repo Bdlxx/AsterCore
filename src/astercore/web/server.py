@@ -287,10 +287,14 @@ class ManagerWebPanel:
         def api_account_status(aid: str):
             rt = _rt_of(aid)
             if rt is None:
-                return _ok({"running": False})
+                return _ok({"running": False, "connected": False})
+            try:
+                st = rt.backend.status()
+            except Exception:
+                st = {}
             return _ok({"running": True, "backend": rt.backend.name,
                         "plugin_count": len(rt.list_plugins()),
-                        "account_id": str(rt.account_id)})
+                        "account_id": str(rt.account_id), **st})
 
         @app.get("/api/accounts/<aid>/plugins")
         def api_account_plugins(aid: str):

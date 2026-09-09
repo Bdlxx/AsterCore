@@ -37,6 +37,19 @@ class Backend(ABC):
         self.account_id = account_id
         self.on_event: Callable[[Event], None] | None = None
         self._running = False
+        # 连接状态（面板展示）
+        self.connected = False
+        self.last_error = ""
+        self.last_event_at: float | None = None
+
+    def status(self) -> dict[str, Any]:
+        """面板用状态快照"""
+        return {
+            "running": self._running,
+            "connected": self.connected,
+            "last_error": self.last_error,
+            "last_event_at": self.last_event_at,
+        }
 
     # ---- 生命周期 ----
     @abstractmethod

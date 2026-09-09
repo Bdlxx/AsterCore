@@ -79,6 +79,17 @@ class AccountRuntime:
     async def action(self, action: str, params: dict[str, Any]) -> ActionResult:
         params = dict(params)
         params.setdefault("account_id", self.account_id)
+        # 发送类动作入日志（面板可见）
+        if action in ("send_group", "send_private", "send_message", "upload_file"):
+            try:
+                texts = [s.get("data", {}).get("text", "") for s in
+                         params.get("message", []) if isinstance(s, dict)
+                         and s.get("type") == "text"]
+                target = params.get("group_id") or params.get("user_id") or ""
+                log.info("发送动作 %s → %s %r", action, target,
+                         "".join(texts)[:40])
+            except Exception:
+                pass
         return await self.backend.action(action, params)
 
     # ---- 插件管理（web/CLI 用） ----
