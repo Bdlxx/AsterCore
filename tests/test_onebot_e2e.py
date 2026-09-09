@@ -64,8 +64,9 @@ class OneBotActionE2ETest(unittest.TestCase):
         for action, params in cases:
             res = self.loop.run_until_complete(self.b.action(action, params))
             self.assertTrue(res.ok, f"{action} 应成功: {res.error}")
-            # fake 回执 data.action 为映射后的 OneBot API 名
-            self.assertIn(res.data.get("action"), ALL_ACTIONS)
+            # fake 回执 data 可能被假数据替换（列表查询类），此时只验证 ok
+            if isinstance(res.data, dict):
+                self.assertIn(res.data.get("action"), ALL_ACTIONS)
 
     def test_unknown_action_fails(self):
         res = self.loop.run_until_complete(self.b.action("no_such", {}))
