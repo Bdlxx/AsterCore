@@ -1,43 +1,40 @@
-# 假 OneBot v11 服务端（联调用，无线上风险）
-# 模拟 NapCat 正向 WebSocket：
-#   - 接受 WS 连接
-#   - 收到 API 调用（action/params/echo）→ 打印并回 {"status":"ok",...}
-#   - 连接建立后推送一条模拟群消息（文本"你好"，触发 demo 插件）
-# 用法：python tools/fake_onebot.py --port 9901 --self 740979632
+# 栖星 AsterCore · fake OneBot 服务端（动作回执断言模式）
+# 用法：
+#   python tools/fake_onebot.py --port 9901               # 基本模式（打印 API）
+#   python tools/fake_onebot.py --port 9901 --expect send_group_msg,send_private_msg
+#      --expect 逗号分隔动作列表：仅当收到列表内动作时才回 ok；其它回 err
+#      --no-push：不推送模拟消息（纯动作断言用）
+#      （用于"后端动作全映射"端到端断言）
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 
 from aiohttp import web
 
 
 class FakeOneBot:
-    def __init__(self, self_id: str) -> None:
+    def __init__(self, self_id: str, expect: list[str] | None = None,
+                 push: bool = True) -> None:
         self.self_id = self_id
-        self.seq = 0
+        self.expect = expect          # 期望收到的动作（None=全部回 ok）
+        self.received: list[str] = []  # 收到的动作名（供主进程查询）
+        self.push = push
 
     async def ws_handler(self, request: web.Request):
         ws = web.WebSocketResponse(heartbeat=10.0)
         await ws.prepare(request)
         print("[fake-onebot] 客户端已连接", flush=True)
-
-        # 推送一条模拟群消息
-        await ws.send_str(json.dumps({
-            "post_type": "message",
-            "message_type": "group",
-            "group_id": 987654321,
-            "user_id": 555000111,
-            "self_id": int(self.self_id),
-            "time": 1700000000,
-            "raw_message": "你好",
-            "message": [{"type": "text", "data": {"text": "你好"}}],
-        }, ensure_ascii=False))
-
+        if self.push:
+            await ws.send_str(json.dumps({
+                "post_type": "message", "message_type": "group",
+                "group_id": 987654321, "user_id": 555000111,
+                "self_id": int(self.self_id), "time": 1700000000,
+                "raw_message": "你好",
+                "message": [{"type": "text", "data": {"text": "你好"}}],
+            }, ensure_ascii=False))
         async for msg in ws:
-            print(f"[fake-onebot] 收到帧 type={msg.type} data={getattr(msg, 'data', None)!r}", flush=True)
             if msg.type == web.WSMsgType.ERROR:
                 print(f"[fake-onebot] WS 错误: {msg.data}", flush=True)
                 continue
@@ -45,19 +42,23 @@ class FakeOneBot:
                 continue
             try:
                 req = json.loads(msg.data)
-                action = req.get("action")
-                params = req.get("params", {})
-                echo = req.get("echo")
-                print(f"[fake-onebot] API: {action} params={json.dumps(params, ensure_ascii=False)[:120]}", flush=True)
-                await ws.send_str(json.dumps({
-                    "status": "ok", "retcode": 0,
-                    "data": {"fake": True, "action": action},
-                    "echo": echo,
-                }))
-            except Exception as e:
-                print(f"[fake-onebot] 处理异常: {type(e).__name__}: {e}", flush=True)
-                import traceback; traceback.print_exc()
-        print("[fake-onebot] 客户端断开")
+            except Exception:
+                continue
+            action = req.get("action")
+            params = req.get("params", {})
+            echo = req.get("echo")
+            self.received.append(action)
+            print(f"[fake-onebot] API: {action} "
+                  f"{json.dumps(params, ensure_ascii=False)[:150]}", flush=True)
+            ok = self.expect is None or action in self.expect
+            await ws.send_str(json.dumps({
+                "status": "ok" if ok else "failed",
+                "retcode": 0 if ok else -1,
+                "data": {"fake": True, "action": action, "params": params},
+                "message": "" if ok else f"unexpected action {action}",
+                "echo": echo,
+            }))
+        print("[fake-onebot] 客户端断开", flush=True)
         return ws
 
     def app(self) -> web.Application:
@@ -68,13 +69,17 @@ class FakeOneBot:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="假 OneBot WS 服务端（联调）")
+    ap = argparse.ArgumentParser(description="假 OneBot WS 服务端（联调/断言）")
     ap.add_argument("--port", type=int, default=9901)
-    ap.add_argument("--self", default="740979632", help="机器人 self_id")
+    ap.add_argument("--self", default="740979632")
+    ap.add_argument("--expect", default=None, help="逗号分隔：仅这些动作回 ok")
+    ap.add_argument("--no-push", action="store_true", help="不推送模拟消息")
     args = ap.parse_args()
-    print(f"[fake-onebot] 监听 ws://127.0.0.1:{args.port}（self_id={args.self}）", flush=True)
-    web.run_app(FakeOneBot(args.self).app(), host="127.0.0.1",
-                port=args.port, print=None)
+    expect = [a.strip() for a in args.expect.split(",")] if args.expect else None
+    print(f"[fake-onebot] 监听 ws://127.0.0.1:{args.port} expect={expect or 'all'}",
+          flush=True)
+    web.run_app(FakeOneBot(args.self, expect=expect, push=not args.no_push).app(),
+                host="127.0.0.1", port=args.port, print=None)
 
 
 if __name__ == "__main__":
