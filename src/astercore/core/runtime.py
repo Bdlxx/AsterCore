@@ -73,6 +73,68 @@ class AccountRuntime:
         params.setdefault("account_id", self.account_id)
         return await self.backend.action(action, params)
 
+    # ---- 插件管理（web/CLI 用） ----
+    def list_plugins(self) -> list[dict[str, Any]]:
+        """列出插件与状态"""
+        out = []
+        for name, lp in self.plugin_loader.loaded.items():
+            out.append({
+                **lp.meta.to_dict(),
+                "enabled": lp.enabled,
+                "file": f"{name}.pyd" if lp.module is None or name not in self.plugin_loader.discover_names() else f"{name}.py",
+            })
+        return out
+
+    async def enable_plugin(self, name: str) -> bool:
+        """启用插件（若未加载则加载并激活注入 ctx）"""
+        lp = self.plugin_loader.loaded.get(name)
+        if lp is None:
+            lp = self.plugin_loader.load(name)
+            if lp is None:
+                return False
+            lp.config = self._load_plugin_config(name)
+        if not lp.enabled:
+            lp.enabled = True
+            ctx = PluginContext(account_id=self.account_id, action=self.action)
+            try:
+                await lp.activate(ctx)
+            except Exception:
+                log.exception("插件 %s 激活失败", name)
+                return False
+        self._refresh_bus()
+        return True
+
+    async def disable_plugin(self, name: str) -> bool:
+        lp = self.plugin_loader.loaded.get(name)
+        if lp is None:
+            return False
+        lp.enabled = False
+        self._refresh_bus()
+        log.info("插件 %s 已停用", name)
+        return True
+
+    async def reload_plugins(self) -> int:
+        """重扫插件目录：卸载消失的、加载新增的（已加载的保持）"""
+        found = set(self.plugin_loader.discover_names())
+        for name in list(self.plugin_loader.loaded):
+            if name not in found:
+                self.plugin_loader.unload(name)
+        ctx = PluginContext(account_id=self.account_id, action=self.action)
+        for name in found:
+            if name not in self.plugin_loader.loaded:
+                lp = self.plugin_loader.load(name)
+                if lp is not None:
+                    lp.config = self._load_plugin_config(name)
+                    try:
+                        await lp.activate(ctx)
+                    except Exception:
+                        log.exception("插件 %s 激活失败", name)
+        self._refresh_bus()
+        return len(self.plugin_loader.loaded)
+
+    def _refresh_bus(self) -> None:
+        self.bus.set_plugins(self.plugin_loader.loaded.values())
+
     def send_group(self, group_id: int | str, text: str):
         """便捷：发群文本（供演示/调试/简单插件复用）"""
         async def _do():
