@@ -25,8 +25,12 @@ _pending: list[dict] = []  # 等待 result 期间到达的其它帧
 
 
 def _send(obj: dict) -> None:
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    try:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+    except (BrokenPipeError, OSError):
+        # 主进程已关闭管道（stop 竞态）——忽略
+        pass
 
 
 def _readline() -> dict | None:
