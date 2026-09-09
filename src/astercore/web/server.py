@@ -245,7 +245,15 @@ class ManagerWebPanel:
         @app.get("/api/accounts/<aid>/plugins")
         def api_account_plugins(aid: str):
             rt = _rt_of(aid)
-            return _ok(rt.list_plugins()) if rt else _err("账号未运行", 404)
+            if rt is None:
+                return _err("账号未运行", 404)
+            items = rt.list_plugins()
+            # 附加原生宿主崩溃计数
+            for it in items:
+                lp = rt.plugin_loader.loaded.get(it["name"])
+                if lp is not None and getattr(lp, "native_host", None) is not None:
+                    it["crashes"] = getattr(lp.native_host, "crash_count", 0)
+            return _ok(items)
 
         @app.post("/api/accounts/<aid>/plugins/<name>/enable")
         def api_acct_plugin_enable(aid: str, name: str):

@@ -117,15 +117,19 @@ async function pick(id) {
   const st = await j(`/api/accounts/${id}/status`);
   if (!st.data.running) { $('#plugins').innerHTML='<span class="muted">账号未运行</span>'; return; }
   const s = await j(`/api/accounts/${id}/plugins`);
-  $('#plugins').innerHTML = s.data.map(p => `
-    <div class="pl"><div><span class="n">${esc(p.name_cn||p.name)}</span>
+  $('#plugins').innerHTML = s.data.map(p => {
+    const tag = p.file && p.file.endsWith('.so')||p.file&&p.file.endsWith('.dll') ? ' <span class="muted" title="原生C-ABI(子进程隔离)">[C]</span>'
+      : p.file && p.file.endsWith('.pyd') ? ' <span class="muted" title="Cython发布">[pyd]</span>' : '';
+    const crash = p.crashes ? ` <span style="color:#e86a5a" title="host崩溃次数">⚠${p.crashes}</span>` : '';
+    return `
+    <div class="pl"><div><span class="n">${esc(p.name_cn||p.name)}</span>${tag}${crash}
       <span class="muted"> v${p.version}</span>
       <div class="d">${esc(p.description||'')}</div></div>
       <span style="display:flex;gap:6px">
         <button class="mini" onclick="editCfg('${id}','${p.name}')">配置</button>
         <button class="mini" onclick="togglePl('${id}','${p.name}',${p.enabled})">${p.enabled?'停用':'启用'}</button>
       </span>
-    </div>`).join('');
+    </div>`; }).join('');
 }
 
 async function toggleAcct(id, running) {

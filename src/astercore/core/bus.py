@@ -33,6 +33,7 @@ class LoadedPlugin:
     config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     ctx: PluginContext | None = None
+    source: str = ""               # 实际来源文件名（面板显示用）
 
     async def activate(self, ctx: PluginContext, loop=None) -> None:
         """注入能力并启动：py 走 on_load/setup；native 启动 host 子进程（隔离）"""
@@ -62,6 +63,13 @@ class LoadedPlugin:
             try:
                 return bool(await self.native_host.handle_event_async(event.to_dict()))
             except Exception:
+                # host 崩溃且重试耗尽：标记 crashed（上层 disable_plugin 可据此停用）
+                nh = self.native_host
+                if nh is not None and getattr(nh, "_crashed", False):
+                    log.error("原生插件 %s host 已崩溃且重启失败（将自动停用）", self.meta.name)
+                    self.enabled = False
+                    await self.shutdown()
+                    return False
                 log.exception("原生插件 %s 事件处理异常", self.meta.name)
                 return False
         fn = None
@@ -113,35 +121,48 @@ class PluginLoader:
         if name in self.loaded:
             return self.loaded[name]
         try:
-            # 原生库：仅当同目录无 .py/.pyd 时采用（.py 开发优先）
-            if not (self.plugins_dir / f"{name}.py").exists() \
-               and not (self.plugins_dir / f"{name}.pyd").exists():
-                for sfx in (".so", ".dll"):
-                    lib = self.plugins_dir / f"{name}{sfx}"
-                    if lib.exists():
-                        meta = PluginMeta(name=name, name_cn=f"原生·{name}",
-                                          version="?", description="原生 C-ABI 插件")
-                        lp = LoadedPlugin(meta=meta, kind="native", lib_path=lib)
-                        self.loaded[name] = lp
-                        log.info("已登记原生插件 %s (%s)", name, lib.name)
-                        return lp
-            # 优先 .pyd（发布二进制），回退 .py
-            spec = None
-            for suffix in (".pyd", ".py"):
-                f = self.plugins_dir / f"{name}{suffix}"
-                if f.exists():
+            # 1) 先试 Python 模块 import（.py 开发优先；.pyd Windows 发布；.so 为
+            #    Cython 扩展/Linux 发布）。import 失败（如纯 C-ABI 库）再走原生。
+            py_sources = [f for sfx in (".py", ".pyd", ".so")
+                          if (f := self.plugins_dir / f"{name}{sfx}").exists()]
+            module = None
+            for f in py_sources:
+                try:
                     spec = importlib.util.spec_from_file_location(
-                        f"astercore.plugins.{name}", f
-                    )
+                        f"astercore.plugins.{name}", f)
+                    if spec is None or spec.loader is None:
+                        continue
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    module = mod
                     break
-            if spec is None or spec.loader is None:
-                log.warning("插件 %s 文件不存在", name)
-                return None
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            meta = self._read_meta(module, name)
-            lp = LoadedPlugin(meta=meta, module=module)
+                except Exception:
+                    continue  # 不是 Python 模块（如 C-ABI 库），尝试下一个
+            if module is not None:
+                meta = self._read_meta(module, name)
+                lp = LoadedPlugin(meta=meta, module=module)
+                # 类插件
+                inst = getattr(module, "plugin", None)
+                if isinstance(inst, Plugin):
+                    lp.instance = inst
+                    lp.module = None
+                lp.source = f.name
+                self.loaded[name] = lp
+                log.info("已加载插件 %s v%s", meta.name_cn or name, meta.version)
+                return lp
+            # 2) 原生 C-ABI 库（ctypes 加载 + nap_plugin_* 导出）
+            for sfx in (".so", ".dll"):
+                lib = self.plugins_dir / f"{name}{sfx}"
+                if lib.exists():
+                    meta = PluginMeta(name=name, name_cn=f"原生·{name}",
+                                      version="?", description="原生 C-ABI 插件")
+                    lp = LoadedPlugin(meta=meta, kind="native", lib_path=lib,
+                                      source=lib.name)
+                    self.loaded[name] = lp
+                    log.info("已登记原生插件 %s (%s)", name, lib.name)
+                    return lp
+            log.warning("插件 %s 文件不存在或无法加载", name)
+            return None
             # 若模块导出 plugin 实例（Plugin 子类）→ 用实例形态
             inst = getattr(module, "plugin", None)
             if isinstance(inst, Plugin):

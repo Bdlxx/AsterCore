@@ -88,7 +88,8 @@ class AccountRuntime:
             out.append({
                 **lp.meta.to_dict(),
                 "enabled": lp.enabled,
-                "file": f"{name}.pyd" if lp.module is None or name not in self.plugin_loader.discover_names() else f"{name}.py",
+                "kind": lp.kind,
+                "file": lp.source or f"{name}.py",
             })
         return out
 
