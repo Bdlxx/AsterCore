@@ -163,11 +163,14 @@ class ManagerWebPanel:
     """
 
     def __init__(self, manager, loop_provider, static_dir=None,
-                 auth_file: str | Path | None = None) -> None:
+                 auth_file: str | Path | None = None,
+                 app_state=None) -> None:
+        """app_state: core.app.AppState（运行方式/向导状态），可 None"""
         if Flask is None:
             raise RuntimeError("需要 Flask：pip install astercore[web]")
         self.manager = manager
         self._loop_provider = loop_provider
+        self.app_state = app_state
         self.static_dir = Path(static_dir) if static_dir else Path(__file__).parent / "static"
         self.app = Flask("astercore-web", static_folder=str(self.static_dir),
                          static_url_path="/assets")
@@ -370,8 +373,53 @@ class ManagerWebPanel:
                 items = [e for e in items if e["ts"] > after]
             return _ok({"logs": items})
 
+    # ---------- 运行方式（桌面壳 AppState Web 化） ----------
+    def _add_runtime_routes(self) -> None:
+        if self.app_state is None:
+            return
+        from astercore.app import BACKEND_MODES
+        app = self.app
+        st = self.app_state
+
+        @app.get("/api/settings/runtime")
+        def api_runtime_get():
+            return _ok({
+                "state": {
+                    "backend_mode": st.backend_mode,
+                    "wizard_completed": st.wizard_completed,
+                    "needs_wizard": st.needs_wizard(),
+                    "risk_acknowledged": st.risk_acknowledged,
+                },
+                "modes": {k: {kk: vv for kk, vv in v.items()
+                              if kk in ("label", "risk", "desc", "needs_ack")}
+                          for k, v in BACKEND_MODES.items()},
+            })
+
+        @app.post("/api/settings/runtime")
+        def api_runtime_set():
+            if st.backend_mode != "none" and st.wizard_completed and not _session_authed():
+                return _err("需先登录", 401)
+            d = request.get_json(force=True, silent=True) or {}
+            if d.get("action") == "reset_wizard":
+                st.reset_wizard()
+                return _ok({"needs_wizard": st.needs_wizard()})
+            mode = d.get("backend_mode")
+            if not mode:
+                return _err("缺少 backend_mode", 400)
+            ok, msg = st.set_backend(str(mode), ack_risk=bool(d.get("ack_risk")))
+            if not ok:
+                return _err(msg, 400)
+            return _ok(st.startup_plan())
+
+    def _session_authed(self) -> bool:
+        from flask import session
+        if self.auth.mode == "none":
+            return True
+        return bool(session.get("ac_auth"))
+
     # ---------- 鉴权路由与前置检查 ----------
     def _setup_auth_gate(self) -> None:
+        self._add_runtime_routes()
         from flask import request, session, jsonify
 
         app = self.app

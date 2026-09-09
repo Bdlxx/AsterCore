@@ -56,6 +56,7 @@
     <div><h1>栖星 AsterCore</h1>
     <div class="sub">多账号面板 · 单端口 JSON API</div></div>
     <div><span id="authmode" class="muted" style="font-size:12px"></span>
+      <button class="mini" id="btnRunMode" onclick="showRunMode()">运行方式</button>
       <button class="mini" id="btnSecure" style="display:none" onclick="showSecure()">安全设置</button>
       <button class="mini" id="btnLogout" style="display:none" onclick="doLogout()">退出</button></div>
   </div>
@@ -157,6 +158,26 @@ async function doLogin() {
   else alert('登录失败');
 }
 async function doLogout() { await fetch('/api/logout',{method:'POST'}); location.reload(); }
+async function showRunMode() {
+  const st = await j('/api/settings/runtime');
+  if (!st.ok) { alert('运行方式设置不可用'); return; }
+  const modes = st.data.modes, cur = st.data.state.backend_mode;
+  let opts = '';
+  for (const k in modes) {
+    const m = modes[k];
+    opts += `\n${k}: ${m.label}（风险 ${'★'.repeat(m.risk)}${m.needs_ack?' 需确认风险':''}）`;
+  }
+  const mode = prompt('选择运行方式（当前 ' + cur + '）:' + opts + '\n\n输入关键字: napcat / lagrange / null');
+  if (!mode) return;
+  const needAck = modes[mode] && modes[mode].needs_ack;
+  const ack = needAck ? confirm('⚠️ 该模式为非官方协议，存在账号风控/封号风险，建议小号。已知晓风险并继续？') : false;
+  if (needAck && !ack) { alert('已取消（需确认风险）'); return; }
+  const r = await j('/api/settings/runtime', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({backend_mode: mode, ack_risk: ack})});
+  alert(r.ok ? ('已设为 ' + mode) : ('失败: ' + (r.error||'')));
+}
+
 async function showSecure() {
   const cfg = (await j('/api/settings/auth', {method:'POST',
     headers:{'Content-Type':'application/json'}, body: JSON.stringify({})})).config

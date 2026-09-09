@@ -114,6 +114,9 @@ async def amain(args: argparse.Namespace) -> int:
         from astercore.core.manager import AccountManager
         from astercore.web.server import ManagerWebPanel, serve_in_background
 
+        from astercore.app import AppState
+        app_state = AppState(Path(args.data_dir))
+        app_state.load()
         mgr = AccountManager(args.accounts_dir, data_root=Path(args.data_dir))
         # 启动全部已配置账号
         for a in mgr.scan():
@@ -121,7 +124,8 @@ async def amain(args: argparse.Namespace) -> int:
                 await mgr.start(a["account_id"])
             except Exception as e:
                 print(f"[warn] 账号 {a['account_id']} 启动失败: {e}")
-        panel = ManagerWebPanel(mgr, loop_provider=lambda: _PANEL_STATE.get("loop"))
+        panel = ManagerWebPanel(mgr, loop_provider=lambda: _PANEL_STATE.get("loop"),
+                                app_state=app_state)
         serve_in_background(panel, host=args.host, port=args.port)
         print(f"[info] 多账号面板: http://{args.host}:{args.port}"
               f"（账号目录 {args.accounts_dir}）")
