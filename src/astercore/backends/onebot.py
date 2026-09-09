@@ -232,3 +232,8 @@ class OneBotV11Backend(Backend):
         fut = self._echo_waiters.pop(echo, None)
         if fut and not fut.done():
             self._loop.call_soon_threadsafe(fut.set_result, payload)
+
+
+# lagrange（内置协议直登）复用 OneBot v11 协议：协议一致，仅运行方式/托管不同
+# （进程托管见 core.process_mgr；此处只注册别名，连接参数同 OneBot）
+register_backend(OneBotV11Backend, name="lagrange")

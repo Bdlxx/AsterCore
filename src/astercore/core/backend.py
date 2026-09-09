@@ -101,8 +101,9 @@ class BackendRegistry:
     def __init__(self) -> None:
         self._classes: dict[str, type[Backend]] = {}
 
-    def register(self, cls: type[Backend]) -> None:
-        self._classes[cls.name] = cls
+    def register(self, cls: type[Backend], name: str | None = None) -> None:
+        """注册后端；name 缺省用 cls.name。同一类可注册多个名字（如 lagrange 复用 onebot）"""
+        self._classes[name or cls.name] = cls
 
     def create(self, name: str, cfg: BackendConfig,
                account_id: int | str | None = None) -> Backend:
@@ -117,8 +118,8 @@ class BackendRegistry:
 _registry = BackendRegistry()
 
 
-def register_backend(cls: type[Backend]) -> type[Backend]:
-    _registry.register(cls)
+def register_backend(cls: type[Backend], name: str | None = None) -> type[Backend]:
+    _registry.register(cls, name=name)
     return cls
 
 
