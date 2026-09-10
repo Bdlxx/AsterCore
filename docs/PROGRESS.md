@@ -79,11 +79,13 @@ Lagrange 子进程托管 / backend-lagrange / 风险提示 —— 未开始。
 
 | 项 | 值 |
 |---|---|
-| 单元测试 | 43 个（+热重载/更新器/启动状态/原生E2E） |
+| 单元测试 | 60 个（+面板静态/API 冒烟、热重载/更新器/启动状态/原生E2E） |
 | 端到端验证 | fake OneBot WS 联调：WS↔翻译↔插件↔发送 全链路 ✅ |
-| 提交数（本地） | 17+ |
-| GitHub 远端 | Bdlxx/AsterCore（11 提交已同步；workflow 待权限） |
+| 面板验证 | Playwright+Chromium 实跑：账号卡片渲染/零 JS 报错 ✅ |
+| Git 远端 | Bdlxx/AsterCore（master + tag 已同步） |
 | 示例插件 | demo_hello(.py/.so) · demo_counter(类插件/热更) · C/Rust 原生示例 |
+
+> 已发布：v0.1.0 / v0.1.1 / v0.1.2 / v0.1.3（v0.1.3 修复面板整页 JS 失效）
 
 ---
 
