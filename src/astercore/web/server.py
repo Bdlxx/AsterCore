@@ -398,6 +398,27 @@ class ManagerWebPanel:
                 items = [e for e in items if e["ts"] > after]
             return _ok({"logs": items})
 
+    # ---------- 统一错误为 JSON（前端可读，避免 500 HTML 卡死 fetch） ----------
+    def _add_error_handlers(self) -> None:
+        app = self.app
+
+        @app.errorhandler(404)
+        def _404(e):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "接口不存在"}), 404
+            return ("Not Found", 404)
+
+        @app.errorhandler(500)
+        def _500(e):
+            return jsonify({"ok": False, "error": f"服务器错误: {e}"}), 500
+
+        @app.errorhandler(Exception)
+        def _exc(e):
+            from werkzeug.exceptions import HTTPException
+            if isinstance(e, HTTPException):
+                return jsonify({"ok": False, "error": e.description or e.name}), e.code or 500
+            return jsonify({"ok": False, "error": f"异常: {type(e).__name__}: {e}"}), 500
+
     # ---------- 运行方式（桌面壳 AppState Web 化） ----------
     def _add_runtime_routes(self) -> None:
         if self.app_state is None:
@@ -444,6 +465,7 @@ class ManagerWebPanel:
 
     # ---------- 鉴权路由与前置检查 ----------
     def _setup_auth_gate(self) -> None:
+        self._add_error_handlers()
         self._add_runtime_routes()
         from flask import request, session, jsonify
 

@@ -195,12 +195,16 @@ async function showSecure() {
   await checkAuth();
 }
 let cur = null, lastTs = 0;
-const j = (u, o) => fetch(u, o).then(r => r.json());
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 async function loadAccounts() {
-  const s = await j('/api/accounts');
-  if (!s.ok) return;
+  let s;
+  try { s = await j('/api/accounts'); }
+  catch(e) {
+    $('#accts').innerHTML = '<span style="color:#e86a5a">加载失败: ' + esc(e.message||e) + '</span>';
+    return;
+  }
+  if (!s.ok) { $('#accts').innerHTML = '<span style="color:#e86a5a">' + esc(s.error||'接口错误') + '</span>'; return; }
   for (const a of s.data) {
     if (a.running) {
       j(`/api/accounts/${a.account_id}/status`).then(st => {
@@ -314,12 +318,6 @@ async function createAcct() {
     editingAcct = null; $('#n_id').disabled = false;
     hideNew(); await loadAccounts(); return;
   }
-  const body = {
-    account_id: $('#n_id').value.trim(),
-    display_name: $('#n_name').value.trim() || $('#n_id').value.trim(),
-    backend: { name: 'onebot', ws_url: $('#n_ws').value.trim(),
-               http_url: $('#n_http').value.trim(), access_token: $('#n_token').value.trim() },
-  };
   const r = await j('/api/accounts', {method:'POST', headers:{'Content-Type':'application/json'},
                                       body: JSON.stringify(body)});
   if (!r.ok) { alert('创建失败: '+(r.error||'')); return; }
@@ -361,7 +359,7 @@ async function saveCfg() {
 function closeCfg() { $('#cfgbox').style.display = 'none'; }
 
 (async function init(){
-  await checkAuth();
+  try { await checkAuth(); } catch(e) { /* 鉴权异常不阻断下方 */ }
   await loadAccounts();
   setInterval(async () => { await loadAccounts(); }, 3000);
   setInterval(pollLogs, 1000);
