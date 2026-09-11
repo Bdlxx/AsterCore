@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import sys
 import inspect
 import logging
 import pkgutil
@@ -15,6 +16,14 @@ from .models import Event
 from .plugin import HANDLE_NOT_HANDLED, Plugin, PluginContext, PluginMeta
 
 log = logging.getLogger("astercore.plugins")
+
+
+def _compat_legacy():
+    """延迟导入 Linux 版兼容层（仅在遇到老插件时用到）"""
+    from astercore.compat.legacy import (is_legacy_module, legacy_meta,
+                                        make_legacy_adapter)
+    return is_legacy_module, legacy_meta, make_legacy_adapter
+
 
 # 原生插件（延迟 import，避免循环）
 def _make_native_proxy(lib_path, action_cb, loop=None):
@@ -34,10 +43,17 @@ class LoadedPlugin:
     enabled: bool = True
     ctx: PluginContext | None = None
     source: str = ""               # 实际来源文件名（面板显示用）
+    legacy: Any = None             # Linux 版老插件适配器（kind=legacy）
+    runtime: Any = None            # 所属账号运行时（老插件兼容层需要）
 
     async def activate(self, ctx: PluginContext, loop=None) -> None:
         """注入能力并启动：py 走 on_load/setup；native 启动 host 子进程（隔离）"""
         self.ctx = ctx
+        if self.kind == "legacy":
+            # 老插件：注入所属账号（兼容层据此定位账号数据/config/发送通道）
+            if self.legacy is not None:
+                self.legacy.runtime = self.runtime
+            return
         if self.kind == "native":
             async def _ac(req: dict):
                 # 异步执行账号统一动作（proxy 在事件循环中调度，不阻塞读线程）
@@ -102,18 +118,68 @@ class PluginLoader:
     - 可选导出：plugin: Plugin 实例 / load / unload
     """
 
-    def __init__(self, plugins_dir: str | Path) -> None:
+    def __init__(self, plugins_dir: str | Path,
+                 extra_dirs: list[str | Path] | None = None,
+                 account_id: Any = None,
+                 runtime: Any = None) -> None:
+        """plugins_dir: 主目录（新 SDK 插件，共享）
+        extra_dirs:  追加目录（如账号内的 Linux 版老插件目录）
+        account_id:  用于隔离模块命名空间（同名插件在不同账号互不干扰）
+        runtime:     所属账号运行时（老插件兼容层用）
+        """
         self.plugins_dir = Path(plugins_dir)
+        self.extra_dirs = [Path(d) for d in (extra_dirs or [])]
+        self.account_id = account_id
+        self.runtime = runtime
         self.loaded: dict[str, LoadedPlugin] = {}
+        self.skipped: set[str] = set()
+
+    # ---- 老插件的 `plugins.*` 内部导入支持 ----
+    def _install_plugins_namespace(self, sample_file: Path | None) -> None:
+        """老插件之间用 `from plugins.xxx import yyy` 互相引用（如 video_parser
+        引用 parser_bridge）。Linux 版靠 CWD=实例目录 + PEP420 命名空间包实现，
+        这里等价地注入一个指向该账号插件目录的 `plugins` 包。"""
+        if sample_file is None:
+            return
+        d = Path(sample_file).parent
+        mod = sys.modules.get("plugins")
+        if mod is None or getattr(mod, "_astercore_ns", False):
+            import types as _types
+            mod = _types.ModuleType("plugins")
+            mod._astercore_ns = True
+            sys.modules["plugins"] = mod
+        paths = list(getattr(mod, "__path__", []) or [])
+        if str(d) not in paths:
+            paths.insert(0, str(d))       # 最近加载的账号优先
+        mod.__path__ = paths
+
+    # ---- 目录解析 ----
+    def all_dirs(self) -> list[Path]:
+        return [self.plugins_dir, *self.extra_dirs]
+
+    def find_source(self, name: str) -> Path | None:
+        """按扩展名优先级在多个目录里找插件文件（.py 优先于 .pyd/.so）"""
+        for sfx in (".py", ".pyd", ".so"):
+            for d in self.all_dirs():
+                f = d / f"{name}{sfx}"
+                if f.exists():
+                    return f
+        for d in self.all_dirs():
+            for sfx in (".dll",):
+                f = d / f"{name}{sfx}"
+                if f.exists():
+                    return f
+        return None
 
     def discover_names(self) -> list[str]:
-        """扫描目录内插件名（.py/.pyd 模块 或 .so/.dll 原生库）"""
-        if not self.plugins_dir.exists():
-            return []
+        """扫描所有插件目录的插件名（.py/.pyd 模块 或 .so/.dll 原生库）"""
         names: list[str] = []
-        for p in sorted(self.plugins_dir.iterdir()):
-            if p.suffix in (".py", ".pyd", ".so", ".dll") and not p.name.startswith("_"):
-                names.append(p.stem)
+        for d in self.all_dirs():
+            if not d.exists():
+                continue
+            for p in sorted(d.iterdir()):
+                if p.suffix in (".py", ".pyd", ".so", ".dll") and not p.name.startswith("_"):
+                    names.append(p.stem)
         return list(dict.fromkeys(names))  # 去重保序（同名 py+so 只留 py 优先）
 
 
@@ -121,56 +187,78 @@ class PluginLoader:
         if name in self.loaded:
             return self.loaded[name]
         try:
-            # 1) 先试 Python 模块 import（.py 开发优先；.pyd Windows 发布；.so 为
-            #    Cython 扩展/Linux 发布）。import 失败（如纯 C-ABI 库）再走原生。
+            # 1) Python 模块（.py 开发优先；.pyd Windows 发布；.so Cython/Linux）
+            #    模块名带账号维度：两个账号各自的同名老插件互不干扰（全局状态隔离）
+            ns = f"astercore_plugins_{self.account_id or 'shared'}"
             py_sources = [f for sfx in (".py", ".pyd", ".so")
-                          if (f := self.plugins_dir / f"{name}{sfx}").exists()]
+                          if (f := self.find_source(name)) is not None
+                          and f.suffix == sfx]
             module = None
+            from astercore.compat.utils_pkg import install as _compat_install
+            _compat_install()          # 幂等：老插件在 import 期就要 import utils
+            self._install_plugins_namespace(py_sources[0] if py_sources else None)
             for f in py_sources:
                 try:
                     spec = importlib.util.spec_from_file_location(
-                        f"astercore.plugins.{name}", f)
+                        f"{ns}.{name}", f)
                     if spec is None or spec.loader is None:
                         continue
                     mod = importlib.util.module_from_spec(spec)
+                    sys.modules[f"{ns}.{name}"] = mod
                     spec.loader.exec_module(mod)
                     module = mod
                     break
-                except Exception:
-                    continue  # 不是 Python 模块（如 C-ABI 库），尝试下一个
+                except Exception as e:
+                    log.debug("插件 %s 以 Python 方式加载失败(%s): %s", name, f.name, e)
+                    sys.modules.pop(f"{ns}.{name}", None)
+                    continue
+
             if module is not None:
+                # ① Linux 版老插件：同步 handle(event: dict) -> bool
+                #    契约见《Windows版开发计划书》§5.2「保持现有 SDK 接口不变」
+                is_legacy_module, legacy_meta, make_legacy_adapter = _compat_legacy()
+                if is_legacy_module(module):
+                    adapter = make_legacy_adapter(module, name)
+                    lp = LoadedPlugin(meta=legacy_meta(module, name),
+                                      kind="legacy", module=adapter,
+                                      legacy=adapter, runtime=self.runtime)
+                    lp.source = f"legacy:{Path(py_sources[0]).name}"
+                    self.loaded[name] = lp
+                    log.info("已加载 Linux 版插件 %s（兼容层）", lp.meta.name_cn or name)
+                    return lp
+
+                # 像 Linux 版 main.py 一样：只收「有 handle」的模块，
+                # 辅助文件（如 parser_bridge/jm_worker）不算插件
+                if not hasattr(module, "handle") and getattr(module, "plugin", None) is None:
+                    self.skipped.add(name)
+                    log.info("跳过 %s（无 handle，非插件模块）", name)
+                    return None
+
                 meta = self._read_meta(module, name)
-                lp = LoadedPlugin(meta=meta, module=module)
+                lp = LoadedPlugin(meta=meta, module=module, runtime=self.runtime)
                 # 类插件
                 inst = getattr(module, "plugin", None)
                 if isinstance(inst, Plugin):
                     lp.instance = inst
                     lp.module = None
-                lp.source = f.name
+                src = py_sources[0] if py_sources else None
+                lp.source = src.name if src else f"{name}.py"
                 self.loaded[name] = lp
                 log.info("已加载插件 %s v%s", meta.name_cn or name, meta.version)
                 return lp
+
             # 2) 原生 C-ABI 库（ctypes 加载 + nap_plugin_* 导出）
-            for sfx in (".so", ".dll"):
-                lib = self.plugins_dir / f"{name}{sfx}"
-                if lib.exists():
-                    meta = PluginMeta(name=name, name_cn=f"原生·{name}",
-                                      version="?", description="原生 C-ABI 插件")
-                    lp = LoadedPlugin(meta=meta, kind="native", lib_path=lib,
-                                      source=lib.name)
-                    self.loaded[name] = lp
-                    log.info("已登记原生插件 %s (%s)", name, lib.name)
-                    return lp
+            lib = self.find_source(name)
+            if lib is not None and lib.suffix in (".so", ".dll"):
+                meta = PluginMeta(name=name, name_cn=f"原生·{name}",
+                                  version="?", description="原生 C-ABI 插件")
+                lp = LoadedPlugin(meta=meta, kind="native", lib_path=lib,
+                                  source=lib.name, runtime=self.runtime)
+                self.loaded[name] = lp
+                log.info("已登记原生插件 %s (%s)", name, lib.name)
+                return lp
             log.warning("插件 %s 文件不存在或无法加载", name)
             return None
-            # 若模块导出 plugin 实例（Plugin 子类）→ 用实例形态
-            inst = getattr(module, "plugin", None)
-            if isinstance(inst, Plugin):
-                lp.instance = inst
-                lp.module = None  # 类插件优先
-            self.loaded[name] = lp
-            log.info("已加载插件 %s v%s", meta.name_cn or name, meta.version)
-            return lp
         except Exception as e:
             log.exception("插件 %s 加载失败: %s", name, e)
             return None

@@ -125,6 +125,10 @@ class AccountManager:
             backend=backend,
             # 插件目录：显式指定优先；否则默认 data/<id>/plugins（与 runtime 一致）
             plugin_dir=self.plugin_dir,
+            # 账号实例目录：对齐 Linux 版 instances/<QQ>/（内含 plugins/ data/ config.json），
+            # 老插件按 __file__/../data 取数据目录，因此布局必须一致
+            instance_dir=self.accounts_dir / str(account_id),
+            display_name=cfg.display_name or str(account_id),
         )
         await rt.start()
         self.runtimes[account_id] = rt
@@ -134,6 +138,11 @@ class AccountManager:
         rt = self.runtimes.pop(account_id, None)
         if rt is not None:
             await rt.stop()
+            try:
+                from astercore.compat.context import unregister_runtime
+                unregister_runtime(rt)
+            except Exception:
+                pass
 
     async def stop_all(self) -> None:
         for aid in list(self.runtimes):

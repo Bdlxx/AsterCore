@@ -167,6 +167,9 @@ class OneBotV11Backend(Backend):
             message_type=mt,
             raw=p.get("raw_message", ""),
             segments=self._translate_segments(p.get("message") or []),
+            # 保留 NapCat 原始报文：供 Linux 版兼容层零损耗还原事件，
+            # 也便于排障时查看后端真实字段
+            extra={"_onebot": p},
         )
         return ev
 

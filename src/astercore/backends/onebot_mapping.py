@@ -25,6 +25,9 @@ def map_action(action: str, params: dict[str, Any]) -> dict[str, Any] | None:
         "get_login_info": ("get_login_info", []),
         "upload_file": ("upload_group_file" if params.get("target", {}).get("type") == "group"
                         else "upload_private_file", None),
+        # 合并转发（Linux 版老插件 send_forward_msg 用到；NapCat 支持 news 外显）
+        "send_group_forward": ("send_group_forward_msg", ["group_id", "messages", "news"]),
+        "send_private_forward": ("send_private_forward_msg", ["user_id", "messages", "news"]),
     }
     if action not in m:
         return None

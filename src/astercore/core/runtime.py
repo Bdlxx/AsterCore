@@ -32,14 +32,23 @@ class AccountRuntime:
     data_dir: Path
     backend: Backend
     plugin_dir: Path | None = None
+    instance_dir: Path | None = None   # 账号实例目录（兼容 Linux 版目录布局）
+    display_name: str = ""             # 账号显示名（config.json 的 BOT_NAME）
     plugin_loader: PluginLoader = field(init=False)
     bus: EventBus = field(init=False)
     plugin_configs: dict[str, dict] = field(default_factory=dict)
+    loop: Any = None                   # 事件循环（老插件兼容层同步调用动作时用）
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.plugin_loader = PluginLoader(self.plugin_dir or self.data_dir / "plugins")
+        # 插件来源（双轨）：共享目录（新 SDK）+ 账号实例目录（Linux 版老插件）
+        self.plugin_loader = PluginLoader(
+            self.plugin_dir or self.data_dir / "plugins",
+            extra_dirs=([self.instance_dir / "plugins"] if self.instance_dir else None),
+            account_id=self.account_id,
+            runtime=self,
+        )
         self.bus = EventBus()
         self.backend.on_event = self._on_event
         install_logring()  # 内核日志接入环形缓冲（幂等）
@@ -50,6 +59,9 @@ class AccountRuntime:
 
     # ---- 生命周期 ----
     async def start(self) -> None:
+        self.loop = asyncio.get_running_loop()
+        from astercore.compat.context import register_runtime
+        register_runtime(self)
         plugins = self.plugin_loader.load_all()
         # 加载插件配置（data/plugins/<name>/config.json）并激活（注入 ctx）
         ctx = PluginContext(account_id=self.account_id, action=self.action)
@@ -73,7 +85,12 @@ class AccountRuntime:
         # 自消息过滤（各后端也可自行过滤；这里兜底）
         if event.self_id is not None and str(event.user_id) == str(event.self_id):
             return
-        await self.bus.dispatch(event)
+        from astercore.compat import context
+        token = context.set_current(self)
+        try:
+            await self.bus.dispatch(event)
+        finally:
+            context.reset_current(token)
 
     # ---- 对外动作（给 web/CLI/未来插件 SDK 用） ----
     async def action(self, action: str, params: dict[str, Any]) -> ActionResult:
