@@ -30,6 +30,13 @@ jobs:
         run: |
           python -m PyInstaller pack/astercore.spec --noconfirm --clean
 
+      - name: Add docs to package
+        shell: pwsh
+        run: |
+          # 使用说明与 README 放在 exe 同级，用户解压即可看到
+          Copy-Item "pack/使用说明.txt" "dist/astercore/使用说明.txt" -Force
+          if (Test-Path "README.md") { Copy-Item "README.md" "dist/astercore/README.md" -Force }
+
       - name: Package zip
         shell: pwsh
         run: |
@@ -37,6 +44,7 @@ jobs:
           $zip = "AsterCore-win64-$ver.zip"
           Compress-Archive -Path dist/astercore/* -DestinationPath $zip -Force
           echo "ZIP_NAME=$zip" >> $env:GITHUB_ENV
+          Write-Host "打包完成: $zip ($([math]::Round((Get-Item $zip).Length/1MB,1)) MB)"
 
       - uses: actions/upload-artifact@v4
         with:

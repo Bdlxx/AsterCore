@@ -9,6 +9,7 @@ import logging
 import threading
 from pathlib import Path
 
+from astercore import __version__
 from astercore.core.manager import AccountConfig
 from astercore.web.auth import AuthConfig
 from typing import Any, Awaitable, Callable
@@ -26,6 +27,26 @@ def run_coro_sync(loop: asyncio.AbstractEventLoop,
     """把协程投到 runtime 的事件循环并同步等待（供 Flask 线程调用）"""
     fut = asyncio.run_coroutine_threadsafe(coro, loop)
     return fut.result(timeout=timeout)
+
+
+def _info_payload(rt=None, data_dir: str = "", accounts_dir: str = "",
+                  plugin_dir=None) -> dict:
+    """版本 + 各目录信息（面板显示 / 排障）。两种面板共用。"""
+    from astercore import paths as _paths
+    if rt is not None:
+        pd = str(rt.plugin_loader.plugins_dir)
+    elif plugin_dir:
+        pd = str(plugin_dir)
+    else:
+        pd = str(_paths.default_plugins_dir())
+    return {
+        "version": __version__,
+        "frozen": _paths.is_frozen(),
+        "base_dir": str(_paths.app_base_dir()),
+        "data_dir": str(data_dir or ""),
+        "accounts_dir": str(accounts_dir or ""),
+        "plugin_dir": pd,
+    }
 
 
 def _ok(data: Any = None):
@@ -63,6 +84,10 @@ class WebPanel:
         def index():
             return send_from_directory(self.static_dir, "index.html")
 
+        @app.get("/api/info")
+        def api_info():
+            return _ok(_info_payload(self._rt()))
+
         @app.get("/api/status")
         def api_status():
             rt = self._rt()
@@ -73,7 +98,7 @@ class WebPanel:
                 "backend": rt.backend.name,
                 "backend_running": rt.backend.running,
                 "plugin_count": len(rt.list_plugins()),
-                "version": "0.1.0",
+                "version": __version__,
             })
 
         @app.get("/api/plugins")
@@ -196,6 +221,19 @@ class ManagerWebPanel:
             return send_from_directory(self.static_dir, "index.html")
 
         # ---------- 账号 ----------
+        @app.get("/api/info")
+        def api_info():
+            rt = None
+            for _r in mgr.runtimes.values():
+                rt = _r
+                break
+            return _ok(_info_payload(
+                rt,
+                data_dir=getattr(mgr, "data_root", ""),
+                accounts_dir=getattr(mgr, "accounts_dir", ""),
+                plugin_dir=getattr(mgr, "plugin_dir", None),
+            ))
+
         @app.get("/api/accounts")
         def api_accounts():
             return _ok(mgr.scan())

@@ -54,7 +54,7 @@
 <body>
   <div style="display:flex;justify-content:space-between;align-items:baseline">
     <div><h1>栖星 AsterCore</h1>
-    <div class="sub">多账号面板 · 单端口 JSON API</div></div>
+    <div class="sub">多账号面板 · 单端口 JSON API <span id="ver" class="muted"></span></div></div>
     <div><span id="authmode" class="muted" style="font-size:12px"></span>
       <button class="mini" id="btnRunMode" onclick="showRunMode()">运行方式</button>
       <button class="mini" id="btnSecure" style="display:none" onclick="showSecure()">安全设置</button>
@@ -83,6 +83,7 @@
 
   <div class="card">
     <b>插件</b> <span class="muted" id="curAcct"></span>
+    <div class="muted" id="plugDir" style="font-size:12px;margin:4px 0"></div>
     <div id="plugins">（先启动/选择账号）</div>
   </div>
 
@@ -133,6 +134,17 @@ async function j(u, o) {
     showLogin(); throw new Error(jd.error);
   }
   return jd;
+}
+async function loadInfo() {
+  try {
+    const s = await j('/api/info');
+    if (!s.ok) return;
+    const d = s.data || {};
+    $('#ver').textContent = 'v' + (d.version || '?');
+    const pd = d.plugin_dir || d.accounts_dir || '';
+    if (pd) $('#plugDir').innerHTML = '插件目录：<code>' + esc(pd) + '</code>'
+      + '（把 .py / .pyd / .dll 放进该目录，点插件「重载」生效）';
+  } catch (e) { /* 信息展示失败不影响使用 */ }
 }
 async function checkAuth() {
   const s = await fetch('/api/auth/status').then(r => r.json());
@@ -228,6 +240,12 @@ async function loadAccounts() {
         <button class="mini" onclick="event.stopPropagation();delAcct('${a.account_id}')">删除</button>
       </span>
     </div>`).join('');
+
+  // 打开页面即自动选中正在运行的账号：插件/调试台/日志立即可用，不必先点一下
+  if (!cur) {
+    const running = s.data.find(a => a.running);
+    if (running) await pick(running.account_id);
+  }
 }
 
 async function loadGroups() {
@@ -360,6 +378,7 @@ function closeCfg() { $('#cfgbox').style.display = 'none'; }
 
 (async function init(){
   try { await checkAuth(); } catch(e) { /* 鉴权异常不阻断下方 */ }
+  await loadInfo();
   await loadAccounts();
   setInterval(async () => { await loadAccounts(); }, 3000);
   setInterval(pollLogs, 1000);

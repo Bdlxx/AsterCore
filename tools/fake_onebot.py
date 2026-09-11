@@ -19,7 +19,8 @@ class FakeOneBot:
                  push: bool = True) -> None:
         self.self_id = self_id
         self.expect = expect          # 期望收到的动作（None=全部回 ok）
-        self.received: list[str] = []  # 收到的动作名（供主进程查询）
+        self.received: list[str] = []  # 收到的动作名
+        self.calls: list[dict] = []    # 收到的完整调用（action+params，供查询）
         self.push = push
 
     async def ws_handler(self, request: web.Request):
@@ -48,6 +49,7 @@ class FakeOneBot:
             params = req.get("params", {})
             echo = req.get("echo")
             self.received.append(action)
+            self.calls.append({"action": action, "params": params})
             print(f"[fake-onebot] API: {action} "
                   f"{json.dumps(params, ensure_ascii=False)[:150]}", flush=True)
             ok = self.expect is None or action in self.expect
@@ -74,10 +76,15 @@ class FakeOneBot:
         print("[fake-onebot] 客户端断开", flush=True)
         return ws
 
+    async def received_handler(self, request: web.Request):
+        """查询已收到的动作（端到端断言用）：GET /received"""
+        return web.json_response({"received": self.received, "calls": self.calls})
+
     def app(self) -> web.Application:
         a = web.Application()
         a.router.add_get("/", self.ws_handler)
         a.router.add_get("/ws", self.ws_handler)
+        a.router.add_get("/received", self.received_handler)
         return a
 
 

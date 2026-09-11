@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astercore"
-version = "0.1.0"
+version = "0.2.0"
 description = "栖星 AsterCore — QQ 机器人多后端框架（Windows 桌面版内核）"
 requires-python = ">=3.10"
 dependencies = [

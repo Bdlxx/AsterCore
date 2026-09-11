@@ -53,11 +53,12 @@ class NativeHostTest(unittest.TestCase):
                                 auto_restart=False)
         crash.init({})
         os.kill(crash._proc.pid, signal.SIGKILL)
-        # 轮询等读线程感知退出
-        deadline = time.time() + 6
+        # 轮询等读线程感知退出（余量给足：CI / 并行构建时机器可能很卡，
+        # 6s 曾在 PyInstaller 构建同时跑测试时偶发失败）
+        deadline = time.time() + 30
         while crash.exit_code is None and time.time() < deadline:
             time.sleep(0.1)
-        self.assertIsNotNone(crash.exit_code)
+        self.assertIsNotNone(crash.exit_code, "读线程未在 30s 内感知到子进程退出")
         with self.assertRaises(HostCrashError):
             crash.handle_event({"type": "message", "data": {}})
 

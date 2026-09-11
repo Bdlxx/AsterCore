@@ -125,6 +125,16 @@ class PanelApiSmokeTest(unittest.TestCase):
         self.assertEqual(r.status_code, 404)
         self.assertFalse(r.get_json()["ok"])
 
+    def test_info_reports_version_and_dirs(self):
+        from astercore import __version__
+        r = self.client.get("/api/info")
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()["data"]
+        self.assertEqual(d["version"], __version__)
+        self.assertIn("plugin_dir", d)
+        self.assertIn("accounts_dir", d)
+        self.assertFalse(d["frozen"], "测试环境不是打包运行")
+
 
 if __name__ == "__main__":
     unittest.main()

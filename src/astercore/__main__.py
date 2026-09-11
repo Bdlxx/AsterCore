@@ -17,6 +17,9 @@ from astercore.backends.null import NullBackend  # noqa: F401  注册（dry-run�
 from astercore.core.backend import BackendConfig, get_registry
 from astercore.core.models import Event, seg_text
 from astercore.core.runtime import AccountRuntime
+from astercore.paths import (app_base_dir, default_accounts_dir,
+                             default_data_dir, default_plugins_dir,
+                             resolve_accounts_dir, resolve_data_dir)
 
 LOG_FMT = "%(asctime)s [%(levelname)s] %(name)s | %(message)s"
 
@@ -27,7 +30,8 @@ _PANEL_STATE: dict = {}
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="astercore", description="栖星 AsterCore")
     ap.add_argument("--account", default="10001", help="账号 ID（多账号目录名）")
-    ap.add_argument("--data-dir", default="data", help="数据根目录（默认 ./data）")
+    ap.add_argument("--data-dir", default=None,
+                    help="数据根目录（默认：打包运行时为 exe 同级 data/）")
     ap.add_argument("--backend", default="onebot", help="后端名（onebot/null）")
     ap.add_argument("--ws", default=None, help="WS 地址（默认 127.0.0.1:3001）")
     ap.add_argument("--http", default=None, help="HTTP 地址（默认 127.0.0.1:3000）")
@@ -36,29 +40,43 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--serve", action="store_true", help="同时启动 Web 面板（HTTP，单账号）")
     ap.add_argument("--serve-accounts", action="store_true",
                     help="多账号模式：启动 Web 面板 + 账号管理器（accounts/ 目录）")
-    ap.add_argument("--accounts-dir", default="accounts", help="账号配置目录（backend.json）")
+    ap.add_argument("--accounts-dir", default=None,
+                    help="账号配置目录（默认：打包运行时为 exe 同级 accounts/）")
     ap.add_argument("--port", type=int, default=8080, help="Web 面板端口")
     ap.add_argument("--host", default="127.0.0.1", help="Web 面板监听地址")
     ap.add_argument("--plugin-dir", default=None, help="插件目录（默认 data/<账号>/plugins）")
     ap.add_argument("-v", "--verbose", action="store_true", help="debug 日志")
+    ap.add_argument("--cli", action="store_true",
+                    help="强制命令行模式（默认无参数或仅启动器参数时进入图形/启动器模式）")
     return ap
 
 
 def _print_title() -> None:
+    from astercore import __version__
     print("=" * 56)
-    print("  栖星 AsterCore · QQ 机器人多后端框架（v0.2 内核 + Web 面板雏形）")
+    print(f"  栖星 AsterCore v{__version__} · QQ 机器人多后端框架")
     print("=" * 56)
 
 
 def _make_runtime(args: argparse.Namespace) -> AccountRuntime:
-    data_root = Path(args.data_dir)
+    data_root = resolve_data_dir(args.data_dir)
     acct_dir = data_root / str(args.account)
     acct_dir.mkdir(parents=True, exist_ok=True)
 
     plugin_dir = Path(args.plugin_dir) if args.plugin_dir else (acct_dir / "plugins")
     if not plugin_dir.exists():
-        from astercore import plugins as _pkg
-        plugin_dir = Path(_pkg.__file__).parent  # dry-run 用内置示例插件
+        # 未指定插件目录：优先用 exe 同级 plugins/（并播种示例），开发态回退内置示例
+        shared = default_plugins_dir()
+        try:
+            from astercore.bootstrap import seed_example_plugins
+            seed_example_plugins(shared)
+        except Exception:
+            pass
+        if shared.is_dir():
+            plugin_dir = shared
+        else:
+            from astercore import plugins as _pkg
+            plugin_dir = Path(_pkg.__file__).parent
 
     registry = get_registry()
     cfg = BackendConfig(
@@ -115,9 +133,17 @@ async def amain(args: argparse.Namespace) -> int:
         from astercore.web.server import ManagerWebPanel, serve_in_background
 
         from astercore.app import AppState
-        app_state = AppState(Path(args.data_dir))
+        data_root = resolve_data_dir(args.data_dir)
+        accounts_dir = resolve_accounts_dir(args.accounts_dir)
+        plugins_dir = default_plugins_dir()
+        try:
+            from astercore.bootstrap import bootstrap
+            bootstrap(app_base_dir(), plugin_dir=plugins_dir)
+        except Exception:
+            pass
+        app_state = AppState(data_root)
         app_state.load()
-        mgr = AccountManager(args.accounts_dir, data_root=Path(args.data_dir))
+        mgr = AccountManager(accounts_dir, plugin_dir=plugins_dir, data_root=data_root)
         # 启动全部已配置账号
         for a in mgr.scan():
             try:
@@ -128,7 +154,7 @@ async def amain(args: argparse.Namespace) -> int:
                                 app_state=app_state)
         serve_in_background(panel, host=args.host, port=args.port)
         print(f"[info] 多账号面板: http://{args.host}:{args.port}"
-              f"（账号目录 {args.accounts_dir}）")
+              f"（账号目录 {accounts_dir}）")
         print("[info] 运行中… Ctrl+C 停止")
         try:
             while True:
@@ -165,13 +191,32 @@ async def amain(args: argparse.Namespace) -> int:
     return 0
 
 
+def is_launcher_invocation(argv: list[str]) -> bool:
+    """判断命令行是否应进入启动器模式。
+
+    规则（面向"双击 exe 就能用"）：
+      · 无参数                        → 启动器
+      · 参数全部是启动器支持的         → 启动器（如 --port 9000 --no-browser --yes）
+      · 出现 --cli 或任何 CLI 专属参数 → 命令行模式（如 --account X --dry-run）
+    """
+    if "--cli" in argv:
+        return False
+    if not argv:
+        return True
+    from astercore.launch import _build_parser as _launch_parser
+    _ns, unknown = _launch_parser().parse_known_args(argv)
+    return not unknown
+
+
 def main() -> None:
-    # 无参数（双击 exe / python -m astercore）→ 桌面模式：启动器（向导+账号+面板+开浏览器）
-    if len(sys.argv) <= 1:
+    argv = sys.argv[1:]
+    if is_launcher_invocation(argv):
         from astercore.launch import main as launch_main
-        launch_main()   # 内部 sys.exit
+        launch_main(argv)   # 内部 sys.exit
         return
-    args = _build_parser().parse_args()
+    if argv and argv[0] == "--cli":
+        argv = argv[1:]
+    args = _build_parser().parse_args(argv)
     try:
         sys.exit(asyncio.run(amain(args)))
     except KeyboardInterrupt:

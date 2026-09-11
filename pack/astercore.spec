@@ -18,9 +18,12 @@ a = Analysis(
     [os.path.join(BASE, 'src/astercore/__main__.py')],
     pathex=[os.path.join(BASE, 'src')],
         binaries=[],
-    # Web 面板静态资源（index.html）必须打进包，否则 Flask 404
+    # Web 面板静态资源（index.html）必须打进包，否则 Flask 404；
+    # plugin_templates 是首启播种用的示例插件源码（必须解压可见，故按 datas 分发）
     datas=[(os.path.join(BASE, 'src', 'astercore', 'web', 'static'),
-            'astercore/web/static')],
+            'astercore/web/static'),
+           (os.path.join(BASE, 'src', 'astercore', 'plugin_templates'),
+            'astercore/plugin_templates')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
