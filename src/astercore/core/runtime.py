@@ -163,6 +163,11 @@ class AccountRuntime:
         _loop = asyncio.get_running_loop()
 
         if name is not None:
+            cur = self.plugin_loader.loaded.get(name)
+            if cur is not None and cur.kind == "legacy" and hasattr(cur.module, "reload_config"):
+                # 老插件：对齐 Linux 版 SIGUSR1 语义——只重读配置，保留内存状态
+                if await cur.reload_config():
+                    return len(self.plugin_loader.loaded)
             lp = self.plugin_loader.loaded.pop(name, None)
             if lp is not None:
                 await lp.shutdown()

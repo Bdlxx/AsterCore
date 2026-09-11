@@ -52,7 +52,24 @@ def is_legacy_module(module: Any) -> bool:
 
 
 def legacy_meta(module: Any, fallback_name: str) -> PluginMeta:
-    """老插件没有元信息 → 用注册表/文档字符串合成，面板照样能显示"""
+    """老插件的元信息：优先用插件自带的 __plugin_*__（Linux 版 SDK 规范），
+    其次查内置注册表，最后退回文件名/文档字符串。"""
+    name_en = getattr(module, "__plugin_name_en__", None) or fallback_name
+    name_cn = getattr(module, "__plugin_name_cn__", None)
+    desc = getattr(module, "__plugin_desc__", None)
+    version = getattr(module, "__plugin_version__", None)
+    author = getattr(module, "__plugin_author__", None)
+    if name_cn or desc:
+        return PluginMeta(
+            name=str(name_en), name_cn=str(name_cn or fallback_name),
+            version=str(version or "legacy"), description=str(desc or ""),
+            author=str(author or "Linux 版插件"),
+        )
+    return _legacy_meta_fallback(module, fallback_name)
+
+
+def _legacy_meta_fallback(module: Any, fallback_name: str) -> PluginMeta:
+    """无自带元信息时：注册表 → 文档字符串 → 文件名"""
     from astercore.compat.utils_pkg import PLUGIN_META_DEFAULT
     key = fallback_name
     known = PLUGIN_META_DEFAULT.get(key) or {}

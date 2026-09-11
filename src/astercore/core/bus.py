@@ -72,6 +72,22 @@ class LoadedPlugin:
                 if hasattr(ret, "__await__"):
                     await ret
 
+    async def reload_config(self) -> bool:
+        """老插件的配置热重载（Linux 版由 SIGUSR1 触发 reload_config()，
+        这里改由面板「重载」触发，语义一致：只重读配置，保留内存状态）"""
+        fn = getattr(self.module, "reload_config", None)
+        if fn is None:
+            return False
+        import asyncio as _aio
+        loop = _aio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, fn)
+            log.info("插件 %s 配置已热重载（保持运行状态）", self.meta.name)
+            return True
+        except Exception:
+            log.exception("插件 %s reload_config 异常", self.meta.name)
+            return False
+
     async def handle(self, event: Event) -> bool | str:
         if self.kind == "native":
             if self.native_host is None:
@@ -172,15 +188,20 @@ class PluginLoader:
         return None
 
     def discover_names(self) -> list[str]:
-        """扫描所有插件目录的插件名（.py/.pyd 模块 或 .so/.dll 原生库）"""
-        names: list[str] = []
+        """扫描所有插件目录的插件名，**全局按名排序**。
+
+        顺序有意义：Linux 版按文件名字母序调用，插件依赖该顺序（例如伪人插件
+        排在视频解析之前，并在代码里硬编码放行后者的指令）。跨目录合并后仍按
+        字母序，才能保持与 Linux 一致的分发语义。
+        """
+        names: set[str] = set()
         for d in self.all_dirs():
             if not d.exists():
                 continue
-            for p in sorted(d.iterdir()):
+            for p in d.iterdir():
                 if p.suffix in (".py", ".pyd", ".so", ".dll") and not p.name.startswith("_"):
-                    names.append(p.stem)
-        return list(dict.fromkeys(names))  # 去重保序（同名 py+so 只留 py 优先）
+                    names.add(p.stem)
+        return sorted(names)
 
 
     def load(self, name: str) -> LoadedPlugin | None:

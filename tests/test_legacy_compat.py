@@ -343,3 +343,94 @@ class LegacyEnvTest(unittest.TestCase):
             info = prepare_legacy_env(Path(td))
         self.assertTrue(info.get("cache_dir"))
         self.assertTrue(default_cache_host().exists())
+
+
+LEGACY_WITH_META = '''
+__plugin_name_en__ = "meta_demo"
+__plugin_name_cn__ = "元数据示例"
+__plugin_desc__ = "演示自带元数据与 reload_config"
+__plugin_version__ = "9.9.9"
+__plugin_author__ = "上游作者"
+
+STATE = {"reloads": 0, "hits": 0}
+
+
+def reload_config():
+    STATE["reloads"] += 1
+
+
+def handle(event: dict) -> bool:
+    STATE["hits"] += 1
+    return False
+'''
+
+
+class LegacyMetaAndReloadTest(unittest.TestCase):
+    """对齐点：① 元数据用插件自带的 __plugin_*__；② 面板重载 = reload_config()
+    （Linux 版 SIGUSR1 语义，保留内存状态，而不是重新 import 丢掉状态）"""
+
+    def setUp(self):
+        compat_install()
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.instance = base / "accounts" / "10001"
+        (self.instance / "plugins").mkdir(parents=True)
+        (self.instance / "data").mkdir(parents=True)
+        (self.instance / "plugins" / "meta_demo.py").write_text(
+            LEGACY_WITH_META, encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _rt(self):
+        return AccountRuntime(
+            account_id=10001, data_dir=Path(self.tmp.name) / "data" / "10001",
+            backend=_SpyBackend(BackendConfig()), instance_dir=self.instance)
+
+    def test_meta_from_plugin_attributes(self):
+        async def _go():
+            rt = self._rt()
+            await rt.start()
+            lp = rt.plugin_loader.loaded["meta_demo"]
+            await rt.stop()
+            return lp
+        lp = asyncio.run(_go())
+        self.assertEqual(lp.meta.name, "meta_demo")
+        self.assertEqual(lp.meta.name_cn, "元数据示例")
+        self.assertEqual(lp.meta.version, "9.9.9")
+        self.assertEqual(lp.meta.author, "上游作者")
+
+    def test_reload_calls_reload_config_and_keeps_state(self):
+        async def _go():
+            rt = self._rt()
+            await rt.start()
+            mod = rt.plugin_loader.loaded["meta_demo"].module.module  # 适配器内层模块
+            ev = Event(type="message", account_id=10001, platform="t", time=0,
+                       user_id=1, group_id=2, self_id=10001, message_type="group",
+                       raw="x", segments=[seg_text("x")])
+            await rt.bus.dispatch(ev)
+            hits_before = mod.STATE["hits"]
+            await rt.reload_plugins("meta_demo")
+            after = rt.plugin_loader.loaded["meta_demo"].module.module
+            same_object = after is mod
+            reloads = after.STATE["reloads"]
+            hits_after = after.STATE["hits"]
+            await rt.stop()
+            return hits_before, same_object, reloads, hits_after
+        hits_before, same_object, reloads, hits_after = asyncio.run(_go())
+        self.assertEqual(hits_before, 1)
+        self.assertTrue(same_object, "重载不应重新 import（会丢内存状态）")
+        self.assertEqual(reloads, 1, "应调用插件的 reload_config()")
+        self.assertEqual(hits_after, 1, "内存状态应保留")
+
+    def test_load_order_is_alphabetical(self):
+        (self.instance / "plugins" / "aaa_first.py").write_text(
+            "def handle(event):\n    return False\n", encoding="utf-8")
+        async def _go():
+            rt = self._rt()
+            await rt.start()
+            names = [p["name"] for p in rt.list_plugins()]
+            await rt.stop()
+            return names
+        names = asyncio.run(_go())
+        self.assertEqual(names, sorted(names), f"加载顺序应全局按名排序: {names}")
