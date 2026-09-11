@@ -3,6 +3,12 @@ from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = []
 hiddenimports += collect_submodules('astercore')
+# Windows 上 ZoneInfo("Asia/Shanghai") 依赖 tzdata 数据文件（老插件要用）
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+    _tz = collect_data_files('tzdata')
+except Exception:
+    _tz = []
 # 桌面壳可选依赖（装了才收集：pywebview 内嵌窗口 / pystray 托盘 / PIL 图标）
 for _opt in ('webview', 'pystray', 'PIL'):
     try:
@@ -23,7 +29,7 @@ a = Analysis(
     datas=[(os.path.join(BASE, 'src', 'astercore', 'web', 'static'),
             'astercore/web/static'),
            (os.path.join(BASE, 'src', 'astercore', 'plugin_templates'),
-            'astercore/plugin_templates')],
+            'astercore/plugin_templates')] + _tz,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

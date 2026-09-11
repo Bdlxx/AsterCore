@@ -79,12 +79,13 @@ Lagrange 子进程托管 / backend-lagrange / 风险提示 —— 未开始。
 
 | 项 | 值 |
 |---|---|
-| 单元测试 | 79 个（+首启引导/路径/入口路由/面板静态与API冒烟/原生E2E） |
+| 单元测试 | 99 个（+Linux 版插件兼容层 20 项、首启引导/入口路由/面板冒烟/原生E2E） |
 | 端到端验证 | fake OneBot WS 联调：WS↔翻译↔插件↔发送 全链路 ✅ |
 | 面板验证 | Playwright+Chromium 实跑：账号卡片/插件列表渲染、零 JS 报错 ✅ |
 | 打包验收 | `tools/e2e_frozen.py`：解压即用全流程 29 项检查（含浏览器级）✅ |
 | Git 远端 | Bdlxx/AsterCore（master + tag 已同步） |
 | 示例插件 | demo_hello(.py/.so) · demo_counter(类插件/热更) · C/Rust 原生示例 |
+| **双端对齐** | Linux 版 5 个线上插件零改动运行（详见 [双端对齐.md](双端对齐.md)） |
 
 > 已发布：v0.1.0 / v0.1.1 / v0.1.2 / v0.1.3（修复面板 JS 失效）/ v0.2.0（可用版）
 

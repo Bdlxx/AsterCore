@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -77,11 +78,54 @@ def seed_example_plugins(plugin_dir: Path, templates_dir: Path | None = None,
     return copied
 
 
+def prepare_legacy_env(base_dir: Path) -> dict[str, object]:
+    """让 Linux 版老插件能在本机正常跑的环境准备（零插件改动）
+
+    1) 子进程编码：jm_downloader 用 utf-8 读子进程 stdout，而 Windows 子进程默认
+       cp936 → 中文/emoji 进度行会丢；设 PYTHONIOENCODING/PYTHONUTF8 让子进程继承
+    2) NapCat 图片缓存目录：老插件按 ~/napcat/cache/images 写文件，提前建好
+    3) venv 解释器路径：老插件按 venv/bin/python 找解释器，Windows 是
+       venv\Scripts\python.exe → 在 venv/bin/ 放一个同名副本（保留 pyvenv.cfg 解析）
+    """
+    info: dict[str, object] = {}
+
+    # 1) 子进程编码
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    info["env_encoding"] = True
+
+    # 2) 缓存目录
+    try:
+        from astercore.compat.paths import default_cache_host
+        cache = default_cache_host()
+        cache.mkdir(parents=True, exist_ok=True)
+        info["cache_dir"] = str(cache)
+    except OSError as e:
+        log.warning("NapCat 缓存目录创建失败: %s", e)
+        info["cache_dir"] = None
+
+    # 3) venv/bin/python（仅 Windows 且存在实例 venv 时）
+    if os.name == "nt":
+        for venv in sorted(base_dir.glob("**/venv")):
+            scripts = venv / "Scripts" / "python.exe"
+            legacy = venv / "bin" / "python.exe"
+            if scripts.exists() and not legacy.exists():
+                try:
+                    legacy.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(scripts, legacy)
+                    info["venv_shim"] = str(legacy)
+                    log.info("已为老插件准备解释器路径: %s", legacy)
+                except OSError as e:
+                    log.warning("venv 解释器副本创建失败: %s", e)
+    return info
+
+
 def bootstrap(base_dir: Path, plugin_dir: Path | None = None) -> dict[str, object]:
-    """首启引导总入口：建目录 + 播种示例插件，返回结果摘要"""
+    """首启引导总入口：建目录 + 播种示例插件 + 兼容环境准备"""
     dirs = ensure_layout(base_dir)
     target = Path(plugin_dir) if plugin_dir else dirs["plugins"]
     seeded = seed_example_plugins(target)
     dirs["seeded"] = seeded
     dirs["plugin_dir"] = target
+    dirs.update(prepare_legacy_env(base_dir))
     return dirs

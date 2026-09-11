@@ -154,6 +154,11 @@ def _install_api(pkg: types.ModuleType) -> types.ModuleType:
     def _has_forward(segs) -> bool:
         return any(s.type == "forward" for s in segs)
 
+    def _finish(rt, segs) -> list[dict]:
+        """统一出口：消息段规整 + 老插件容器路径映射（Windows 原生 NapCat）"""
+        from astercore.compat import paths as _cpaths
+        return _cpaths.map_segments(segments_to_onebot_list(segs), rt)
+
     def send_message(event, message):
         rt = _rt(event)
         tgt = _target(event or {})
@@ -163,7 +168,7 @@ def _install_api(pkg: types.ModuleType) -> types.ModuleType:
         segs = normalize_message(message)
         if _has_forward(segs):   # 合并转发走专门动作（OneBot 里 send_msg 不支持）
             return _send_forward(rt, event, segs)
-        params["message"] = segments_to_onebot_list(segs)
+        params["message"] = _finish(rt, segs)
         res = _run_action(rt, action, params)
         return bool(getattr(res, "ok", False))
 
@@ -174,7 +179,7 @@ def _install_api(pkg: types.ModuleType) -> types.ModuleType:
             return False
         action, params = tgt
         segs = normalize_message(message)
-        params["message"] = segments_to_onebot_list(segs)
+        params["message"] = _finish(rt, segs)
         res = _run_action(rt, action, params)
         if on_ok is not None:
             try:

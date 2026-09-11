@@ -5,6 +5,7 @@
 # + utils.*），而不是要求插件改写。本测试锁定该契约。
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -265,3 +266,80 @@ class RealWordlibTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LegacyPathMapTest(unittest.TestCase):
+    """老插件硬编码的容器路径 → 本机 NapCat 目录（Windows 原生 NapCat 必需）"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.instance = base / "accounts" / "10001"
+        (self.instance / "plugins").mkdir(parents=True)
+        (self.instance / "data").mkdir(parents=True)
+        self.rt = AccountRuntime(
+            account_id=10001, data_dir=base / "data" / "10001",
+            backend=_SpyBackend(BackendConfig()), instance_dir=self.instance)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _cfg(self, extra: dict):
+        (self.instance / "config.json").write_text(
+            json.dumps(extra, ensure_ascii=False), encoding="utf-8")
+
+    def test_identity_by_default_on_linux(self):
+        """Linux/Docker 下容器路径本来就是对的 → 默认不映射（保持线上行为）"""
+        from astercore.compat import paths as cpaths
+        self._cfg({"BOT_QQ": 10001})
+        self.assertEqual(cpaths.path_map(self.rt), [])
+        self.assertEqual(cpaths.map_path("/app/cache/images/a.png", self.rt),
+                         "/app/cache/images/a.png")
+
+    def test_explicit_mapping_applies(self):
+        from astercore.compat import paths as cpaths
+        self._cfg({"BOT_QQ": 10001, "NAPCAT_CACHE_PREFIX": "/app/cache/images",
+                   "NAPCAT_CACHE_HOST": "/tmp/napcat-cache"})
+        mapped = cpaths.map_path("/app/cache/images/sub/a.png", self.rt)
+        self.assertTrue(mapped.startswith("/tmp/napcat-cache"), mapped)
+        self.assertIn("sub", mapped)
+        self.assertNotIn("/app/", mapped)
+
+    def test_segments_mapping_only_touches_file(self):
+        from astercore.compat import paths as cpaths
+        self._cfg({"BOT_QQ": 10001, "NAPCAT_CACHE_PREFIX": "/app/cache/images",
+                   "NAPCAT_CACHE_HOST": "/tmp/napcat-cache"})
+        segs = [{"type": "text", "data": {"text": "/app/cache/images/keep"}},
+                {"type": "image", "data": {"file": "/app/cache/images/a.png"}}]
+        out = cpaths.map_segments(segs, self.rt)
+        self.assertEqual(out[0]["data"]["text"], "/app/cache/images/keep")
+        self.assertTrue(out[1]["data"]["file"].startswith("/tmp/napcat-cache"))
+
+    def test_other_paths_untouched(self):
+        from astercore.compat import paths as cpaths
+        self._cfg({"BOT_QQ": 10001, "NAPCAT_CACHE_PREFIX": "/app/cache/images",
+                   "NAPCAT_CACHE_HOST": "/tmp/napcat-cache"})
+        self.assertEqual(cpaths.map_path("http://x/y.png", self.rt), "http://x/y.png")
+        self.assertEqual(cpaths.map_path("file:///app/cache/images/a.png", self.rt),
+                         "file:///app/cache/images/a.png")
+
+
+class LegacyEnvTest(unittest.TestCase):
+    """老插件在 Windows 上跑起来所需的环境准备"""
+
+    def test_prepare_env_sets_encoding(self):
+        os.environ.pop("PYTHONIOENCODING", None)
+        os.environ.pop("PYTHONUTF8", None)
+        from astercore.bootstrap import prepare_legacy_env
+        with tempfile.TemporaryDirectory() as td:
+            prepare_legacy_env(Path(td))
+        self.assertEqual(os.environ.get("PYTHONIOENCODING"), "utf-8")
+        self.assertEqual(os.environ.get("PYTHONUTF8"), "1")
+
+    def test_cache_dir_created(self):
+        from astercore.bootstrap import prepare_legacy_env
+        from astercore.compat.paths import default_cache_host
+        with tempfile.TemporaryDirectory() as td:
+            info = prepare_legacy_env(Path(td))
+        self.assertTrue(info.get("cache_dir"))
+        self.assertTrue(default_cache_host().exists())

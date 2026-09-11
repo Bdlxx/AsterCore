@@ -10,6 +10,8 @@ requires-python = ">=3.10"
 dependencies = [
     "websocket-client>=1.6",
     "requests>=2.28",
+    # Windows 无系统 tzdata，而 wordlib/marry 用 ZoneInfo("Asia/Shanghai")
+    "tzdata>=2024.1; platform_system=='Windows'",
 ]
 
 [project.optional-dependencies]
