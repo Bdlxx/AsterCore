@@ -79,7 +79,7 @@ Lagrange 子进程托管 / backend-lagrange / 风险提示 —— 未开始。
 
 | 项 | 值 |
 |---|---|
-| 单元测试 | 99 个（+Linux 版插件兼容层 20 项、首启引导/入口路由/面板冒烟/原生E2E） |
+| 单元测试 | 120 个（+Linux 版插件兼容层、Windows 路径契约、首启引导/入口路由/面板冒烟/原生E2E） |
 | 端到端验证 | fake OneBot WS 联调：WS↔翻译↔插件↔发送 全链路 ✅ |
 | 面板验证 | Playwright+Chromium 实跑：账号卡片/插件列表渲染、零 JS 报错 ✅ |
 | 打包验收 | `tools/e2e_frozen.py`：解压即用全流程 29 项检查（含浏览器级）✅ |
@@ -114,11 +114,14 @@ Lagrange 子进程托管 / backend-lagrange / 风险提示 —— 未开始。
 
 ## 五、近期候选任务（按优先级）
 
-1. P2 桌面壳：pywebview 窗口 + 托盘 + 首启向导（需先解决 Windows 构建/运行环境）
-2. P3：Cython .pyd 构建脚本（插件发布态）
-3. P3：原生插件 host 子进程隔离骨架（跨平台可先做 host 协议）
-4. P5：Windows 真实构建验证（GitHub Actions 或本地 Windows）
-5. P1 补充：消息段全类型测试、类插件示例（配置热更演示）
+1. **P0 视频解析依赖链**：已定论 —— 36 个包全有 Windows 轮子、零编译（详见
+   [Windows-视频解析依赖链.md](Windows-视频解析依赖链.md)）。**下一步**：把 `parser`
+   可选依赖组 + PyInstaller 收集规则写进构建，随包放 `tools/ffmpeg/bin/ffmpeg.exe`，
+   然后跑一次真实 Windows 构建。
+2. 依赖链 backlog（审计发现、未修）里标「高」的两项：
+   `parsers/__init__.py` 的无条件 import 改逐平台 try、`cookie.py` 落盘加异常保护
+3. P2 桌面壳：pywebview 窗口 + 托盘 + 首启向导（需先解决 Windows 构建/运行环境）
+4. P1 补充：消息段全类型测试、类插件示例（配置热更演示）
 
 ---
 

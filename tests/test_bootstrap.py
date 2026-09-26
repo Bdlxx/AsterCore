@@ -109,6 +109,111 @@ class BootstrapTest(unittest.TestCase):
             self.assertEqual(info2["seeded"], [])
 
 
+class LegacyEnvTest(unittest.TestCase):
+    """老插件运行环境准备：ffmpeg / venv 解释器副本 / stdout 编码 / 依赖自检"""
+
+    def test_find_ffmpeg_prefers_bundled_and_prepends_path(self):
+        from astercore.bootstrap import find_ffmpeg
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+            bundled = base / "tools" / "ffmpeg" / "bin" / exe_name
+            bundled.parent.mkdir(parents=True)
+            bundled.write_bytes(b"#!/bin/sh\n")
+            old = os.environ.get("PATH", "")
+            try:
+                found = find_ffmpeg(base)
+                self.assertEqual(found, str(bundled))
+                self.assertTrue(os.environ["PATH"].startswith(str(bundled.parent)),
+                                "找到的 ffmpeg 目录必须排在 PATH 最前面"
+                                "（老插件用的是裸命令名，不会自己去别处找）")
+            finally:
+                os.environ["PATH"] = old
+
+    def test_find_ffmpeg_none_when_missing(self):
+        from astercore.bootstrap import find_ffmpeg
+        with tempfile.TemporaryDirectory() as td:
+            old = os.environ.get("PATH", "")
+            old_ff = os.environ.pop("FFMPEG_PATH", None)
+            os.environ["PATH"] = td          # 一个绝对找不到 ffmpeg 的 PATH
+            try:
+                self.assertIsNone(find_ffmpeg(Path(td)))
+            finally:
+                os.environ["PATH"] = old
+                if old_ff is not None:
+                    os.environ["FFMPEG_PATH"] = old_ff
+
+    def test_venv_shim_uses_both_names_on_windows(self):
+        """插件按 venv/bin/python 探测：两个名字都要有"""
+        from astercore.bootstrap import prepare_venv_shims
+        with tempfile.TemporaryDirectory() as td:
+            venv = Path(td) / "accounts" / "10001" / "venv"
+            (venv / "Scripts").mkdir(parents=True)
+            (venv / "Scripts" / "python.exe").write_bytes(b"MZ fake py")
+            info = prepare_venv_shims(Path(td), is_windows=True)
+            self.assertTrue((venv / "bin" / "python").is_file())
+            self.assertTrue((venv / "bin" / "python.exe").is_file())
+            self.assertTrue(info.get("venv_shim"))
+
+    def test_venv_shim_overwrites_linux_elf(self):
+        """从 Linux 拷来的 venv/bin/python 是 ELF —— 必须被覆盖成 Windows 副本。
+
+        否则 os.path.exists 为真 → 插件选中它 → Popen 报 WinError 193
+        '%1 不是有效的 Win32 应用程序'，每单 JM 任务都失败。
+        """
+        from astercore.bootstrap import prepare_venv_shims
+        with tempfile.TemporaryDirectory() as td:
+            venv = Path(td) / "accounts" / "10001" / "venv"
+            (venv / "Scripts").mkdir(parents=True)
+            (venv / "Scripts" / "python.exe").write_bytes(b"MZ real windows py")
+            (venv / "bin").mkdir(parents=True)
+            elf = venv / "bin" / "python"
+            elf.write_bytes(b"\x7fELF\x02\x01\x01\x00 not a windows exe")
+            prepare_venv_shims(Path(td), is_windows=True)
+            self.assertTrue(elf.read_bytes().startswith(b"MZ"),
+                            "Linux ELF 副本必须被覆盖，否则 Windows 上 Popen 必失败")
+
+    def test_venv_shim_noop_on_linux(self):
+        """Linux 上完全不动（线上两个实例就是 Linux）"""
+        from astercore.bootstrap import prepare_venv_shims
+        with tempfile.TemporaryDirectory() as td:
+            venv = Path(td) / "accounts" / "10001" / "venv"
+            (venv / "bin").mkdir(parents=True)
+            (venv / "bin" / "python").write_bytes(b"\x7fELF linux")
+            info = prepare_venv_shims(Path(td), is_windows=False)
+            self.assertEqual(info, {})
+            self.assertEqual((venv / "bin" / "python").read_bytes(), b"\x7fELF linux")
+
+    def test_force_utf8_stdio_is_safe(self):
+        """中文 Windows 上非 GBK 字符（⚠/❌）会让 print 抛异常 —— 启动时统一切 UTF-8"""
+        from astercore.bootstrap import force_utf8_stdio
+        self.assertIsInstance(force_utf8_stdio(), bool)   # 不能抛异常
+
+    def test_legacy_parser_deps_reports_missing(self):
+        from astercore.bootstrap import legacy_parser_deps
+        missing = legacy_parser_deps()
+        self.assertIsInstance(missing, list)
+        self.assertNotIn("json5", missing, f"本机应装好解析依赖，缺: {missing}")
+
+    def test_prepare_legacy_env_pins_home_and_reports(self):
+        from astercore.bootstrap import prepare_legacy_env
+        with tempfile.TemporaryDirectory() as td:
+            old = os.environ.get("ASTERCORE_HOME")
+            os.environ.pop("ASTERCORE_HOME", None)
+            try:
+                info = prepare_legacy_env(Path(td))
+                self.assertEqual(os.environ["ASTERCORE_HOME"], str(Path(td).resolve()),
+                                 "老插件按 __file__ 层级推算仓库根，需要基准目录兜底")
+                self.assertIn("ffmpeg", info)
+                self.assertIn("parser_deps_missing", info)
+                self.assertIn("cache_dir", info)
+            finally:
+                if old is None:
+                    os.environ.pop("ASTERCORE_HOME", None)
+                else:
+                    os.environ["ASTERCORE_HOME"] = old
+
+
 class VersionTest(unittest.TestCase):
 
     def test_version_is_semver(self):
