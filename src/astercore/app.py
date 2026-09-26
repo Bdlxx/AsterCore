@@ -48,6 +48,18 @@ WEB_DEFAULTS: dict[str, Any] = {
 }
 
 
+# 传输通道配置（《WebView2 支持检测说明》§四）：允许用户覆盖自动检测结果
+TRANSPORT_MODES = ("auto", "webview", "http")
+DEFAULT_TRANSPORT = "auto"
+
+
+def validate_transport(mode: str) -> str | None:
+    """校验 transport 取值；返回错误说明或 None"""
+    if mode not in TRANSPORT_MODES:
+        return f"transport 只能是 {'/'.join(TRANSPORT_MODES)}（收到 {mode!r}）"
+    return None
+
+
 def validate_web_cfg(cfg: dict, auth_mode: str = "none") -> str | None:
     """校验 Web 配置；返回错误说明或 None（施工手册 §4.3「强制规则」）。
 
@@ -115,6 +127,25 @@ class AppState:
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, target)
+
+    # ---- 传输通道（WebView2 检测说明 §四） ----
+    def transport_mode(self) -> str:
+        """auto / webview / http（缺省或非法值一律按 auto 处理）"""
+        got = self.data.get("transport")
+        if isinstance(got, dict):
+            got = got.get("mode")
+        mode = str(got or DEFAULT_TRANSPORT).strip().lower()
+        return mode if mode in TRANSPORT_MODES else DEFAULT_TRANSPORT
+
+    def set_transport(self, mode: str) -> tuple[bool, str]:
+        mode = str(mode or "").strip().lower()
+        err = validate_transport(mode)
+        if err:
+            return False, err
+        self.data["transport"] = {"mode": mode}
+        self.save()
+        log.info("传输通道已设为 %s", mode)
+        return True, ""
 
     # ---- Web 服务开关（手册 §3.1/§3.2/§4.3） ----
     def web_config(self) -> dict[str, Any]:

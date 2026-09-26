@@ -156,10 +156,9 @@ async def amain(args: argparse.Namespace) -> int:
     hub = build_hub()
     hub.bind_panel(panel)
 
-    # 通道决策（手册 §1.2/§3.1）：
-    #   有 pywebview 且没被 --no-shell 关掉 → 桌面模式：窗口走 js_api，**HTTP 默认不启动**
-    #   否则 → 浏览器模式：必须起 HTTP（那是唯一的界面）
-    desktop = ShellApp.webview_available() and not getattr(args, "no_shell", False)
+    # 通道决策（WebView2 检测说明 §六 + 施工手册 §1.2/§3.1）：
+    #   auto   → 三层检测，全过才走内嵌窗口，否则降级 HTTP 并**明确告知原因**
+    #   webview/http → 用户手动指定，跳过自动检测
     web_cfg = state.web_config()
     # 命令行显式给 --port/--host = 本次运行要开 Web（**不写回 runtime.json**：
     # 命令行是"这一次"的覆盖，面板里的开关才是持久设置）
@@ -173,8 +172,19 @@ async def amain(args: argparse.Namespace) -> int:
     if getattr(args, "no_web", False):
         web_cfg["enabled"] = False
 
+    transport, wv2 = decide_transport(args, state)
+    desktop = transport == "webview"
+    if wv2 is not None:
+        from astercore.webview2 import arch_note
+        print(f"[launch] WebView2 检测: {wv2.code} — {wv2.reason}")
+        note = arch_note()
+        if note:
+            print(f"[launch] {note}")
+
     http_url = ""
+    fallback = False          # True = 因为检测不过而本地兜底（≠ 用户主动开 Web）
     if web_cfg["enabled"]:
+        # 【主动开 Web】用户配置的 host/port，可对外，强制密码（见 validate_web_cfg）
         err = validate_web_cfg(web_cfg, panel.auth.mode)
         if err:
             print(f"[launch] Web 服务未启动：{err}")
@@ -189,34 +199,172 @@ async def amain(args: argparse.Namespace) -> int:
             http_url = f"http://{client_host}:{port}"
             print(f"[launch] Web 面板已就绪: {http_url}")
     elif desktop:
-        print("[launch] Web 服务未开启（桌面模式走进程内 RPC，不需要端口）")
-        print("[launch] 需要手机/别的电脑访问时，在面板「安全设置」里打开 Web 服务")
+        print("[launch] Web 服务未开启（内嵌窗口走进程内 RPC，不需要端口）")
+        print("[launch] 需要手机/别的电脑访问时，在面板里打开 Web 服务")
+    else:
+        # 【本地回退】规范 §5.2：这是"没办法的办法"，与主动开 Web 是两件事 ——
+        # 只绑回环 + **随机端口**，绝不用用户配置里的那个端口，也不对外。
+        port = _random_free_port()
+        serve_in_background(panel, host="127.0.0.1", port=port)
+        http_url = f"http://127.0.0.1:{port}"
+        fallback = True
+        print(f"[launch] 本地回退：面板地址 {http_url}")
+
     if not started:
         print("[launch] 提示：打开面板 → 账号 → 新建账号 填入你的 QQ 号与 NapCat 地址")
 
     if desktop:
         return await _run_desktop(args, state, panel, hub, mgr, http_url)
 
-    if not http_url:
-        # 既没有桌面壳又没开 Web：起一个兜底 HTTP，否则用户看不到任何界面
-        port = _pick_port("127.0.0.1", web_cfg["port"])
-        serve_in_background(panel, host="127.0.0.1", port=port)
-        http_url = f"http://127.0.0.1:{port}"
-        print(f"[launch] 未检测到桌面组件，回退浏览器模式: {http_url}")
+    # 降级告知（规范 §5.1）：不能静默打开浏览器。必须说清"为什么 + 地址 + 怎么装"
+    #
+    # 只在**本地回退**（fallback）时才弹：用户如果本来就主动开了 Web 服务，
+    # 浏览器模式就是他要的结果，再去解释一遍是噪音；而且弹窗是阻塞的，
+    # 无头环境（CI/e2e）里没人点会一直卡住。
+    if fallback and wv2 is not None and not wv2.ok:
+        _explain_downgrade(wv2, http_url)
+
+    _start_tray_for_http(hub, http_url, state)
 
     import os as _os
     if not args.no_browser and not _os.environ.get("ASTER_NO_OPEN"):
         import threading
         threading.Timer(0.8, _open_browser, args=(http_url,)).start()
 
+    # 规范 §5.3：HTTP 模式下关掉浏览器标签 ≠ 退出程序，托盘常驻。
+    # 托盘「退出」通过线程安全的 event 唤醒主循环。
+    stop = asyncio.Event()
+    _bind_quit(loop, stop)
     try:
-        while True:
-            await asyncio.sleep(3600)
+        await stop.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
         await mgr.stop_all()
     return 0
+
+
+# ---------------------------------------------------------------- 通道决策与降级体验
+
+_QUIT_HOOKS: list = []
+
+
+def _bind_quit(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
+    """把"退出"回调交给托盘菜单（线程 → 事件循环）"""
+    def _quit() -> None:
+        loop.call_soon_threadsafe(stop.set)
+
+    _QUIT_HOOKS.append(_quit)
+
+
+def _take_quit() -> "callable | None":
+    return _QUIT_HOOKS.pop() if _QUIT_HOOKS else None
+
+
+def decide_transport(args, state) -> tuple[str, object | None]:
+    """决定走内嵌窗口还是浏览器（《WebView2 支持检测说明》§四/§六）。
+
+    返回 (transport, 检测结果)。检测结果只在"真的做了检测"时非空 ——
+    这样调用方就能区分「用户自己选了 HTTP」和「检测不过被迫降级」，
+    只有后者才需要弹窗解释。
+    """
+    from astercore.shell import ShellApp
+    have_webview = ShellApp.webview_available()
+
+    if getattr(args, "no_shell", False):
+        return "http", None                     # 用户明确要浏览器模式
+    if getattr(args, "shell", False):
+        # 强制内嵌：调试用；缺 pywebview 也不能装作成功
+        if not have_webview:
+            print("[launch] --shell 要求内嵌窗口，但未安装 pywebview（pip install astercore[desktop]）")
+        return ("webview" if have_webview else "http"), None
+
+    mode = state.transport_mode()
+    if mode == "http":
+        print("[launch] transport=http（配置指定），跳过 WebView2 检测")
+        return "http", None
+    if mode == "webview":
+        print("[launch] transport=webview（配置指定），跳过 WebView2 检测")
+        if not have_webview:
+            print("[launch] 未安装 pywebview，无法强制内嵌窗口，改为浏览器模式")
+        return ("webview" if have_webview else "http"), None
+
+    # auto：没装 pywebview 就不用检测了（开发机/CI 常见）
+    if not have_webview:
+        return "http", None
+    from astercore.webview2 import NOT_WINDOWS, detect
+    st = detect()
+    if st.code == NOT_WINDOWS:
+        # 非 Windows（Linux/macOS）：WebView2 检测不适用，有 pywebview 就用
+        return "webview", None
+    return ("webview" if st.ok else "http"), st
+
+
+def _explain_downgrade(status, url: str) -> None:
+    """降级必须明确告知（规范 §5.1/§3）：原因 + 地址 + 怎么装 WebView2"""
+    from astercore.nativeui import message_box
+    from astercore.webview2 import WV2_DOWNLOAD_URL, RUNTIME_MISSING, VERSION_TOO_OLD
+    lines = [
+        "栖星 AsterCore 本次以【浏览器模式】启动。",
+        "",
+        f"原因：{status.reason}",
+        "",
+        f"面板地址（可复制到浏览器打开）：{url}",
+        "程序会常驻系统托盘，关闭浏览器标签不会退出。",
+    ]
+    if status.code in (RUNTIME_MISSING, VERSION_TOO_OLD):
+        lines += ["", "想要内嵌窗口的体验，可以安装/更新 WebView2 运行时（免费，微软官方）：",
+                  WV2_DOWNLOAD_URL]
+        kind = "warning"
+    else:
+        lines += ["", "你的系统版本不满足 WebView2 的要求，浏览器模式是当前最佳选择。"]
+        kind = "info"
+    message_box("栖星 AsterCore · 已切换为浏览器模式", "\n".join(lines), kind=kind)
+
+
+def _start_tray_for_http(hub, url: str, state) -> None:
+    """HTTP 模式下的托盘常驻（规范 §5.3）。
+
+    没有托盘能力就什么都不做 —— 不能因为托盘不可用就把程序变成"关不掉"。
+    """
+    from astercore.shell import ShellApp
+    if not ShellApp.tray_available():
+        print("[launch] 未安装托盘组件（pystray/pillow），程序需用 Ctrl+C 退出")
+        return
+    import threading
+    title = f"栖星 AsterCore v{__version__}"
+
+    def _run() -> None:
+        try:
+            import pystray
+
+            def _on_open(icon, item):
+                _open_browser(url)
+
+            def _on_quit(icon, item):
+                icon.stop()
+                cb = _take_quit()
+                if cb:
+                    cb()
+
+            app = ShellApp("", hub=hub, tray=True, title=title)
+            icon = pystray.Icon("astercore", app._make_icon_image(), title,
+                                pystray.Menu(
+                                    pystray.MenuItem("打开面板", _on_open, default=True),
+                                    pystray.MenuItem("退出", _on_quit)))
+            icon.run()
+        except Exception as e:                       # noqa: BLE001
+            print(f"[launch] 托盘不可用: {e}")
+
+    threading.Thread(target=_run, daemon=True, name="astercore-tray").start()
+    print("[launch] 已常驻托盘：右键图标可打开面板或退出")
+
+
+def _random_free_port() -> int:
+    """取一个空闲端口（规范 §5.2 本地回退用随机端口，不用用户配置的那个）"""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
 
 
 async def _run_desktop(args, state, panel, hub, mgr, http_url: str) -> int:

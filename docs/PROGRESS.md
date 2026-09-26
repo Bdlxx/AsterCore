@@ -83,7 +83,7 @@ Lagrange 子进程托管 / backend-lagrange / 风险提示 —— 未开始。
 
 | 项 | 值 |
 |---|---|
-| 单元测试 | 146 个（+Linux 版插件兼容层、Windows 路径契约、桌面 RPC/壳/单实例、首启引导/面板冒烟/原生E2E） |
+| 单元测试 | 180 个（+Linux 版插件兼容层、Windows 路径契约、桌面 RPC/壳/单实例、首启引导/面板冒烟/原生E2E） |
 | 端到端验证 | fake OneBot WS 联调：WS↔翻译↔插件↔发送 全链路 ✅ |
 | 面板验证 | Playwright+Chromium 实跑：账号卡片/插件列表渲染、零 JS 报错 ✅ |
 | 打包验收 | `tools/e2e_frozen.py`：解压即用全流程 29 项检查（含浏览器级）✅ |
