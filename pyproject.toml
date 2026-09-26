@@ -15,8 +15,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-web = ["flask>=2.2"]
-desktop = ["flask>=2.2", "pywebview>=5", "pystray>=0.19", "pillow>=10"]
+web = ["flask>=2.2", "waitress>=3"]
+desktop = ["flask>=2.2", "waitress>=3", "pywebview>=5", "pystray>=0.19", "pillow>=10"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

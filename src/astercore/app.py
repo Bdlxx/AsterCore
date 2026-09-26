@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,38 @@ BACKEND_MODES: dict[str, dict[str, Any]] = {
 STATE_FILE = "runtime.json"
 WIZARD_VERSION = 1  # 向导结构版本（升级需重走向导时递增）
 
+# Web 服务默认值（施工手册 §3.1「默认开关」/ §3.2「默认 host」/ §3.3 端口）
+#   默认**关闭**：单机用户占多数，默认关减少攻击面，也少一个防火墙弹窗
+#   默认 host = 127.0.0.1：只有本机能连；对外监听必须用户主动改并设密码
+WEB_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "host": "127.0.0.1",
+    "port": 18750,
+}
+
+
+def validate_web_cfg(cfg: dict, auth_mode: str = "none") -> str | None:
+    """校验 Web 配置；返回错误说明或 None（施工手册 §4.3「强制规则」）。
+
+    这条规则的意义：用户经常忘记开密码就对外监听，一次疏忽就可能账号被盗。
+    所以在**启动服务之前**拦住，而不是等出事。
+    """
+    if not cfg.get("enabled"):
+        return None
+    host = str(cfg.get("host") or "127.0.0.1").strip()
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        if auth_mode == "none":
+            return "对外监听必须开启密码或 Token（当前为免密模式）"
+    try:
+        port = int(cfg.get("port"))
+    except (TypeError, ValueError):
+        return "端口必须是数字"
+    if not (1 <= port <= 65535):
+        return "端口范围 1-65535"
+    if not host:
+        return "监听地址不能为空"
+    return None
+
 
 @dataclass(slots=True)
 class AppState:
@@ -64,6 +97,12 @@ class AppState:
                 log.warning("runtime.json 解析失败，按默认启动")
 
     def save(self) -> None:
+        """**原子写入**（施工手册 §5.2）。
+
+        为什么：崩溃/断电时配置损坏会非常痛苦，而成本极低 —— 先写 .tmp，
+        再 os.replace 覆盖。os.replace 在同一目录内是原子的，所以要么是旧文件、
+        要么是新文件，永远不会是半个 JSON。
+        """
         self.data_root.mkdir(parents=True, exist_ok=True)
         d = {
             "backend_mode": self.backend_mode,
@@ -72,8 +111,38 @@ class AppState:
             "risk_acknowledged": self.risk_acknowledged,
             "extra": self.data,
         }
-        (self.data_root / STATE_FILE).write_text(
-            json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        target = self.data_root / STATE_FILE
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, target)
+
+    # ---- Web 服务开关（手册 §3.1/§3.2/§4.3） ----
+    def web_config(self) -> dict[str, Any]:
+        """Web 服务配置（含默认值，缺项自动补齐）"""
+        cfg = dict(WEB_DEFAULTS)
+        got = self.data.get("web")
+        if isinstance(got, dict):
+            cfg.update({k: v for k, v in got.items() if v is not None})
+        return cfg
+
+    def set_web_config(self, patch: dict, auth_mode: str = "none") -> tuple[bool, str, dict]:
+        """改 Web 配置；**先校验再落盘**（校验不过不改、不启动）。返回 (ok, err, cfg)"""
+        cfg = self.web_config()
+        for k in ("enabled", "host", "port"):
+            if k in patch and patch[k] is not None:
+                cfg[k] = patch[k]
+        cfg["enabled"] = bool(cfg.get("enabled"))
+        try:
+            cfg["port"] = int(cfg["port"])
+        except (TypeError, ValueError):
+            return False, "端口必须是数字", cfg
+        err = validate_web_cfg(cfg, auth_mode)
+        if err:
+            return False, err, cfg
+        self.data["web"] = cfg
+        self.save()
+        log.info("Web 服务配置已更新: %s", cfg)
+        return True, "", cfg
 
     # ---- 查询 ----
     def needs_wizard(self) -> bool:

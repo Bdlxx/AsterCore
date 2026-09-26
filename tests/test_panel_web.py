@@ -66,6 +66,32 @@ class PanelStaticTest(unittest.TestCase):
         finally:
             Path(path).unlink(missing_ok=True)
 
+    def test_transport_layer_present(self):
+        """传输层必须存在且按运行时选择（施工手册 §1.5）。
+
+        桌面壳用 js_api（进程内 RPC），浏览器用 HTTP —— 同一份前端两边都能跑。
+        """
+        js = _script_block()
+        for needle in ("const Transport", "pywebviewready", "installFetchShim",
+                       "window.pywebview.api.rpc", "location.protocol !== 'file:'"):
+            self.assertIn(needle, js, f"传输层缺少关键实现: {needle}")
+        # j() 必须走 Transport（否则桌面模式下所有请求都会打到 file:// 上）
+        self.assertIn("await Transport.call(u, o)", js)
+        # 初始化块内必须**先定通道、再开始取数据**
+        init_block = js[js.index("(async function init()"):]
+        self.assertLess(init_block.index("Transport.detect()"),
+                        init_block.index("await checkAuth()"),
+                        "init 里必须先 detect 通道再发请求")
+
+    def test_localstorage_is_guarded(self):
+        """file:// 下 localStorage 可能被禁用 —— 裸访问会让整段脚本死掉（白屏）"""
+        js = _script_block()
+        self.assertIn("__ac_probe", js, "应有 localStorage 可用性探测 + 内存兜底")
+        # 裸访问只允许出现在 store 内部（探测 1 次 + 返回 1 次）
+        self.assertEqual(js.count("localStorage."), 2,
+                         "裸 localStorage 访问只应出现在 store 的探测与实现里")
+        self.assertIn("store.getItem('ac_token')", js, "业务代码应走带兜底的 store")
+
 
 class PanelApiSmokeTest(unittest.TestCase):
     """真实 Flask 面板的 API 冒烟: 首页 200 / 账号列表 JSON / 鉴权状态"""

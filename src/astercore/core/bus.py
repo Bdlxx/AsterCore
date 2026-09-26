@@ -248,17 +248,26 @@ class PluginLoader:
                     log.info("已加载 Linux 版插件 %s（兼容层）", lp.meta.name_cn or name)
                     return lp
 
-                # 像 Linux 版 main.py 一样：只收「有 handle」的模块，
-                # 辅助文件（如 parser_bridge/jm_worker）不算插件
-                if not hasattr(module, "handle") and getattr(module, "plugin", None) is None:
-                    self.skipped.add(name)
-                    log.info("跳过 %s（无 handle，非插件模块）", name)
-                    return None
+                # 像 Linux 版 main.py 一样：辅助文件（如 parser_bridge/jm_worker）
+                # 不算插件。但"是不是插件"要看两种形态：
+                #   · 模块函数式：模块里有 handle
+                #   · 类插件    ：模块里导出 plugin 实例，**或**只定义了一个 Plugin 子类
+                # 最后那种容错是必要的：插件模板一度漏了 `plugin = Xxx()` 这一行，
+                # 结果用户首启播种出来的类插件被当成"非插件"静默跳过（e2e 抓到过）。
+                inst = getattr(module, "plugin", None)
+                if not hasattr(module, "handle") and not isinstance(inst, Plugin):
+                    cls = self._find_plugin_class(module, name)
+                    if cls is None:
+                        self.skipped.add(name)
+                        log.info("跳过 %s（无 handle、也无 Plugin 子类，非插件模块）", name)
+                        return None
+                    inst = cls()
+                    log.info("插件 %s 未导出 plugin 实例，已按类名自动实例化 %s()",
+                             name, cls.__name__)
 
                 meta = self._read_meta(module, name)
                 lp = LoadedPlugin(meta=meta, module=module, runtime=self.runtime)
                 # 类插件
-                inst = getattr(module, "plugin", None)
                 if isinstance(inst, Plugin):
                     lp.instance = inst
                     lp.module = None
@@ -301,6 +310,26 @@ class PluginLoader:
             asyncio.get_event_loop().run_until_complete(lp.shutdown())
         except Exception:
             pass
+
+    @staticmethod
+    def _find_plugin_class(module: Any, want_name: str) -> type | None:
+        """在模块里找唯一的 Plugin 子类（优先类名与插件名一致的）。
+
+        找不到或有多个候选就返回 None —— 宁可不加载，也不要瞎猜哪个类是插件入口。
+        """
+        cands: list[type] = []
+        for attr, val in vars(module).items():
+            if not isinstance(val, type) or val is Plugin:
+                continue
+            if attr.startswith("_") or not issubclass(val, Plugin):
+                continue
+            cands.append(val)
+        if not cands:
+            return None
+        for c in cands:
+            if c.__name__ == want_name:
+                return c
+        return cands[0] if len(cands) == 1 else None
 
     @staticmethod
     def _read_meta(module: Any, fallback_name: str) -> PluginMeta:

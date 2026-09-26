@@ -64,3 +64,6 @@ class demo_counter(Plugin):  # noqa: N801 —— 类名与插件名一致，便�
             elif event.user_id is not None:
                 await self.ctx.send_private(event.user_id, msg)
         return True
+
+
+plugin = demo_counter()  # 类插件形态：模块导出实例（漏了这行插件不会被加载）

@@ -54,7 +54,7 @@
 <body>
   <div style="display:flex;justify-content:space-between;align-items:baseline">
     <div><h1>栖星 AsterCore</h1>
-    <div class="sub">多账号面板 · 单端口 JSON API <span id="ver" class="muted"></span></div></div>
+    <div class="sub">多账号面板 · <span id="link">正在连接机器人核心…</span> <span id="ver" class="muted"></span></div></div>
     <div><span id="authmode" class="muted" style="font-size:12px"></span>
       <button class="mini" id="btnRunMode" onclick="showRunMode()">运行方式</button>
       <button class="mini" id="btnSecure" style="display:none" onclick="showSecure()">安全设置</button>
@@ -122,14 +122,83 @@
 </div>
 <script>
 const $ = s => document.querySelector(s);
-let authToken = localStorage.getItem('ac_token') || '';
+
+/* 本地存储：桌面版窗口加载的是本地文件（file://），Chromium 系在 file:// 下
+   可能禁用 localStorage —— 直接访问会让**整段脚本死掉**（面板白屏）。
+   所以套一层带内存兜底的 store。（施工手册 §8.1/§5 的同类"静默全崩"风险）*/
+const store = (() => {
+  try {
+    localStorage.setItem('__ac_probe', '1'); localStorage.removeItem('__ac_probe');
+    return localStorage;
+  } catch (e) {
+    const mem = {};
+    return { getItem: k => (k in mem ? mem[k] : null),
+             setItem: (k, v) => { mem[k] = String(v); },
+             removeItem: k => { delete mem[k]; } };
+  }
+})();
+let authToken = store.getItem('ac_token') || '';
+
+/* 传输层（施工手册 §1.5：运行时自动选择，同一份前端两边都能跑）
+   桌面壳：window.pywebview.api.rpc —— 进程内调用，零端口零鉴权
+   浏览器：HTTP /api/*（开着 Web 服务时）
+   关键点：**必须等 pywebviewready**，直接读 window.pywebview 是 undefined。*/
+const Transport = (() => {
+  let mode = 'http';
+  const hasJs = () => !!(window.pywebview && window.pywebview.api && window.pywebview.api.rpc);
+
+  async function detect() {
+    if (hasJs()) { mode = 'jsapi'; return mode; }
+    if (location.protocol !== 'file:') { mode = 'http'; return mode; }
+    // 桌面壳（本地文件）→ 等注入，最多 3 秒，超时按 HTTP 兜底
+    const ok = await new Promise(res => {
+      const done = v => { clearTimeout(t); clearInterval(iv); res(v); };
+      const t = setTimeout(() => done(false), 3000);
+      const iv = setInterval(() => { if (hasJs()) done(true); }, 50);
+      window.addEventListener('pywebviewready', () => done(true), { once: true });
+    });
+    mode = ok ? 'jsapi' : 'http';
+    return mode;
+  }
+
+  async function call(u, o) {
+    const o2 = o || {};
+    if (mode !== 'jsapi') {
+      const r = await fetch(u, o2);
+      let jd; try { jd = await r.json(); } catch (e) { jd = { ok: false, error: 'bad resp' }; }
+      return jd;
+    }
+    let body;
+    if (o2.body) { try { body = JSON.parse(o2.body); } catch (e) { body = o2.body; } }
+    return await window.pywebview.api.rpc(u, { method: o2.method || 'GET', body: body });
+  }
+
+  /* fetch 兜底垫片：桌面模式下把同源/相对 URL 的请求转成 js_api。
+     这样既有 5 处 fetch 调用点一行都不用改，**将来新加的前端代码也自动走对通道**。*/
+  function installFetchShim() {
+    if (mode !== 'jsapi' || window.__acShim) return;
+    window.__acShim = true;
+    const orig = window.fetch.bind(window);
+    window.fetch = async (u, o) => {
+      const url = typeof u === 'string' ? u : ((u && u.url) || '');
+      const sameOrigin = !/^[a-z]+:\/\//i.test(url);
+      if (sameOrigin) {
+        const jd = await call(url, o);
+        return { ok: true, status: 200, json: async () => jd, text: async () => JSON.stringify(jd) };
+      }
+      return orig(u, o);
+    };
+  }
+
+  return { detect, call, installFetchShim, get mode() { return mode; } };
+})();
+
 async function j(u, o) {
   o = o || {};
   const h = o.headers || {};
   if (authToken) h['Authorization'] = 'Bearer ' + authToken;
   o.headers = h;
-  const r = await fetch(u, o);
-  let jd; try { jd = await r.json(); } catch(e) { jd = {ok:false,error:'bad resp'}; }
+  const jd = await Transport.call(u, o);
   if (jd && jd.ok === false && (jd.error === '未登录' || (jd.error||'').includes('Token'))) {
     showLogin(); throw new Error(jd.error);
   }
@@ -342,19 +411,28 @@ async function createAcct() {
   hideNew(); await loadAccounts();
 }
 
+/* 日志只保留最近 N 行（施工手册 §6.3）：服务端 LogRing 有上限，但前端一直
+   appendChild —— 机器人日志多的时候，几千个 DOM 节点会直接把页面拖卡。 */
+const LOG_MAX_ROWS = 500;
+function trimLogs(box, max) {
+  while (box.childElementCount > max) box.removeChild(box.firstElementChild);
+}
+
 async function pollLogs() {
   if (!cur) return;
   const s = await j(`/api/accounts/${cur}/logs?after=${lastTs}`);
   if (s.ok && s.data.logs.length) {
+    const box = $('#logs');
     for (const e of s.data.logs) {
       lastTs = Math.max(lastTs, e.ts);
       const t = new Date(e.ts*1000).toTimeString().slice(0,8);
       const d = document.createElement('div'); d.className='l';
       d.innerHTML = `<span class="muted">${t}</span> <span class="lvl-${e.level}">[${e.level}]</span>
         <span class="muted">${esc(e.source)}</span> | ${esc(e.msg)}`;
-      $('#logs').appendChild(d);
+      box.appendChild(d);
     }
-    $('#logs').scrollTop = $('#logs').scrollHeight;
+    trimLogs(box, LOG_MAX_ROWS);
+    box.scrollTop = box.scrollHeight;
   }
 }
 
@@ -377,6 +455,11 @@ async function saveCfg() {
 function closeCfg() { $('#cfgbox').style.display = 'none'; }
 
 (async function init(){
+  // 先定传输通道（桌面 js_api / 浏览器 HTTP），再装 fetch 垫片，最后才开始取数据
+  try { await Transport.detect(); Transport.installFetchShim(); } catch(e) { /* 兜底走 HTTP */ }
+  const link = $('#link');
+  if (link) link.textContent = Transport.mode === 'jsapi'
+      ? '桌面模式 · 进程内 RPC' : '浏览器模式 · HTTP';
   try { await checkAuth(); } catch(e) { /* 鉴权异常不阻断下方 */ }
   await loadInfo();
   await loadAccounts();

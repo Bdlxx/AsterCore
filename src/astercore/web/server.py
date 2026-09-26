@@ -559,6 +559,13 @@ class ManagerWebPanel:
         @app.before_request
         def _gate():
             p = request.path
+            # 进程内 RPC（js_api → RpcHub → test_client）：可信调用，跳过鉴权。
+            # 手册 §4.1「js_api 不鉴权」——它就在本进程里，只有本机程序能调，
+            # 加鉴权只会让桌面版莫名其妙要用户输密码。标记用 threading.local，
+            # **不走 header**，所以对外暴露 HTTP 时也不构成绕过面。
+            from astercore.rpc import is_trusted
+            if is_trusted():
+                return None
             if p.startswith("/api/login") or p.startswith("/api/auth/") \
                or p.startswith("/assets/"):
                 return None
@@ -582,4 +589,19 @@ class ManagerWebPanel:
             return None
 
     def serve(self, host: str = "127.0.0.1", port: int = 8080) -> None:
-        self.app.run(host=host, port=port, threaded=True, use_reloader=False)
+        """启动 HTTP 服务。
+
+        优先 **waitress**（手册 §1.3 的坑：Flask 内置服务器在多连接下会出怪问题；
+        waitress 默认只有 4 个线程，面板的轮询/日志流一开就占满，所以 threads=32 起步）。
+        没装 waitress 就退回 Flask 内置服务器，并**明确告警**而不是静默降级 ——
+        否则用户会遇到"面板偶尔卡死"这种查不出原因的现象。
+        """
+        try:
+            from waitress import serve as _waitress_serve
+        except ImportError:
+            log.warning("未安装 waitress，退回 Flask 内置服务器（多连接/轮询下不稳）；"
+                        "建议 pip install waitress")
+            self.app.run(host=host, port=port, threaded=True, use_reloader=False)
+            return
+        log.info("Web 服务已启动: http://%s:%s（waitress, 32 线程）", host, port)
+        _waitress_serve(self.app, host=host, port=port, threads=32)

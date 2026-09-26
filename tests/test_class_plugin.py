@@ -69,5 +69,50 @@ class ClassPluginTest(unittest.TestCase):
         self.assertEqual(r3, "passed")
 
 
+class ShippedTemplateTest(unittest.TestCase):
+    """**随包分发的**类插件模板必须真的能被加载。
+
+    背景（真实回归，冻结版 e2e 抓到）：`plugin_templates/demo_counter.py` 是
+    首启播种给用户看的示例，但它漏了 SDK 示例里那行 `plugin = demo_counter()`，
+    于是被加载器当成"无 handle 的非插件模块"静默跳过 —— 用户第一次运行就看到
+    一个"播种了却不工作"的示例。这里把模板本身钉住。
+    """
+
+    def setUp(self):
+        from astercore.paths import plugin_templates_dir
+        self.tpl = plugin_templates_dir() / "demo_counter.py"
+        self.tmp = Path(tempfile.mkdtemp())
+        self.pdir = self.tmp / "plugins"
+        self.pdir.mkdir()
+        shutil.copy(self.tpl, self.pdir / "demo_counter.py")
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.rt = AccountRuntime(
+            account_id="x", data_dir=self.tmp / "data",
+            backend=NullBackend(BackendConfig()), plugin_dir=self.pdir)
+
+    def tearDown(self):
+        try:
+            self.loop.run_until_complete(self.rt.stop())
+        finally:
+            self.loop.close()
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_template_is_loadable(self):
+        self.loop.run_until_complete(self.rt.start())
+        names = [p["name"] for p in self.rt.list_plugins()]
+        self.assertIn("demo_counter", names, f"播种模板未被加载: {names}")
+        self.assertNotIn("demo_counter", self.rt.plugin_loader.skipped,
+                         "播种模板被当成非插件跳过了")
+
+    def test_template_handles_and_replies(self):
+        self.loop.run_until_complete(self.rt.start())
+        ev = Event(type="message", account_id="x", platform="t", time=0,
+                   user_id=1, group_id=9, self_id="x", message_type="group",
+                   raw="计数器", segments=[seg_text("计数器")])
+        self.assertEqual(self.loop.run_until_complete(self.rt.bus.dispatch(ev)),
+                         "handled")
+
+
 if __name__ == "__main__":
     unittest.main()

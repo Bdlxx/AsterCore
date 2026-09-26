@@ -10,7 +10,7 @@ try:
 except Exception:
     _tz = []
 # 桌面壳可选依赖（装了才收集：pywebview 内嵌窗口 / pystray 托盘 / PIL 图标）
-for _opt in ('webview', 'pystray', 'PIL'):
+for _opt in ('webview', 'pystray', 'PIL', 'waitress'):
     try:
         hiddenimports += collect_submodules(_opt)
     except Exception:
