@@ -28,6 +28,22 @@ DEFAULT_CONFIG = {
     "reply": "计数君已响应 {n} 次～",
 }
 
+# 可配置项声明：面板据此**自动生成表单**（core/config_schema.py）。
+# 插件只管声明类型，前端只实现「类型 → 控件」的通用映射，两边不用互相知道。
+# 老插件（Linux 版那套）也能用同一份声明——加这个字典不影响任何行为。
+__config_schema__ = {
+    "keywords": {
+        "type": "list", "item_type": "text", "label": "触发关键词",
+        "help": "消息里含任一关键词就计数；不区分大小写",
+        "min_items": 1,
+    },
+    "reply": {
+        "type": "text", "label": "回复内容",
+        "placeholder": "计数君已响应 {n} 次～", "maxlength": 200,
+        "help": "{n} 会被替换成当前计数",
+    },
+}
+
 
 class demo_counter(Plugin):  # noqa: N801 —— 类名与插件名一致，便于日后编译发布
     def __init__(self) -> None:

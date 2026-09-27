@@ -79,6 +79,9 @@ class PluginMeta:
     description: str = ""
     author: str = ""
     master_only: bool = False     # 仅主人可用（用于命令级约束，供内核提示）
+    # 可配置项声明：{键: {type/label/...}}，见 core/config_schema.py。
+    # 也可以改用模块级 __config_schema__（模块级优先）。
+    config_schema: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {

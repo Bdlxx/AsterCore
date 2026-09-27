@@ -53,8 +53,11 @@ def _ok(data: Any = None):
     return jsonify({"ok": True, "data": data})
 
 
-def _err(msg: str, code: int = 400):
-    return jsonify({"ok": False, "error": msg}), code
+def _err(msg: str, code: int = 400, extra: dict | None = None):
+    body = {"ok": False, "error": msg}
+    if extra:
+        body.update(extra)
+    return jsonify(body), code
 
 
 class WebPanel:
@@ -370,14 +373,46 @@ class ManagerWebPanel:
                 return _err("账号未运行", 404)
             return _ok(rt.get_plugin_config(name))
 
+        @app.get("/api/accounts/<aid>/plugins/<name>/schema")
+        def api_acct_plugin_schema(aid: str, name: str):
+            """插件可配置项声明（面板据此渲染表单）。
+
+            没有声明的插件返回按当前值推断的字段 + declared=false —— 面板会注明
+            "这是自动推断的"，并保留 JSON 原文编辑兜底，所以不会出现"空页面"。
+            """
+            rt = _rt_of(aid)
+            if rt is None:
+                return _err("账号未运行", 404)
+            return _ok(rt.get_plugin_schema(name))
+
         @app.post("/api/accounts/<aid>/plugins/<name>/config")
         def api_acct_plugin_config_save(aid: str, name: str):
             rt = _rt_of(aid)
             if rt is None:
                 return _err("账号未运行", 404)
             data = request.get_json(force=True, silent=True) or {}
-            ok = run_coro_sync(self._loop(), rt.save_plugin_config(name, data))
-            return _ok({"saved": ok}) if ok else _err("保存失败", 400)
+            want_raw = request.args.get("raw") in ("1", "true", "yes")
+            if want_raw:
+                ok = run_coro_sync(self._loop(), rt.save_plugin_config(name, data))
+                return _ok({"saved": ok, "validated": False}) if ok else _err("保存失败", 400)
+
+            from astercore.core.config_schema import validate_and_merge
+            payload = rt.get_plugin_schema(name)
+            # 只有插件**自己声明**了 schema 时才做严格校验/类型转换；
+            # 推断出来的字段只用于渲染，不能拿它当法律去改写用户数据。
+            declared = bool(payload.get("declared"))
+            fields = ({f["name"]: f for f in payload.get("fields", [])}
+                      if declared else {})
+            current = rt.get_plugin_config(name)
+            ok, merged, errors = validate_and_merge(
+                fields, current, data, strict=declared)
+            if not ok:
+                # 精确到字段的错误，前端可以标红到控件上
+                return _err("配置校验未通过", 400, {"field_errors": errors})
+            saved = run_coro_sync(self._loop(), rt.save_plugin_config(name, merged))
+            if not saved:
+                return _err("保存失败", 400)
+            return _ok({"saved": True, "validated": declared, "config": merged})
 
         @app.post("/api/accounts/<aid>/plugins/reload")
         def api_acct_plugins_reload(aid: str):

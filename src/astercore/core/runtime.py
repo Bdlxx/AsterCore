@@ -226,6 +226,32 @@ class AccountRuntime:
                 log.warning("插件配置解析失败: %s", cf)
         return {}
 
+    def get_plugin_schema(self, name: str) -> dict[str, Any]:
+        """插件声明的配置 schema（没有就按当前值推断）。
+
+        取值顺序：模块级 `__config_schema__` → `PluginMeta.config_schema` → 推断。
+        老插件（kind=legacy）的 module 是兼容层适配器，它 __getattr__ 转发到真模块，
+        所以老插件也能用同一套声明，且**不需要改任何行为**。
+        """
+        from .config_schema import build_payload
+        raw = None
+        declared_by = ""
+        lp = self.plugin_loader.loaded.get(name)
+        if lp is not None:
+            try:
+                raw = getattr(lp.module, "__config_schema__", None)
+            except Exception:                   # noqa: BLE001 — 老插件属性异常不该影响面板
+                raw = None
+            if raw:
+                declared_by = "__config_schema__"
+            elif getattr(lp.meta, "config_schema", None):
+                raw = lp.meta.config_schema
+                declared_by = "PluginMeta"
+        payload = build_payload(raw, self.get_plugin_config(name))
+        payload["declared_by"] = declared_by
+        payload["plugin"] = name
+        return payload
+
     def get_plugin_config(self, name: str) -> dict[str, Any]:
         """读插件配置（含运行时内存值，保存后立即反映）"""
         lp = self.plugin_loader.loaded.get(name)

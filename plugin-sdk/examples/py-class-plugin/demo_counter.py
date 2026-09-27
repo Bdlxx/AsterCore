@@ -59,4 +59,13 @@ class demo_counter(Plugin):  # noqa: N801 —— 类名与插件名一致便于�
         return True
 
 
+# 可配置项声明（面板自动生成表单；见 core/config_schema.py）
+__config_schema__ = {
+    "keywords": {"type": "list", "item_type": "text", "label": "触发关键词",
+                 "min_items": 1},
+    "reply": {"type": "text", "label": "回复内容", "maxlength": 200,
+              "placeholder": "计数君已响应 {n} 次～"},
+}
+
+
 plugin = demo_counter()  # 类插件形态：模块导出实例

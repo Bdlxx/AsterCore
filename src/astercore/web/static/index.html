@@ -38,13 +38,40 @@
   .lvl-debug{color:#7f8ea3}.lvl-info{color:#d7e0ea}.lvl-warn{color:#e8b34b}
   .lvl-error{color:#e86a5a}
   .muted{color:var(--muted)} .hidden{display:none}
-  #cfgbox textarea{width:100%;height:220px;background:#10151d;color:var(--fg);
+  #cfgbox textarea{width:100%;background:#10151d;color:var(--fg);
     border:1px solid var(--line);border-radius:6px;font-family:Consolas,monospace;
     font-size:12px;padding:8px}
+  #cfg-text{height:240px}
   #cfgbox{position:fixed;inset:0;background:rgba(8,10,14,.72);display:none;
     align-items:center;justify-content:center;z-index:9}
   #cfgbox .box{background:var(--card);border:1px solid var(--line);border-radius:10px;
-    padding:16px;width:560px;max-width:92vw}
+    padding:16px;width:620px;max-width:92vw;max-height:88vh;display:flex;flex-direction:column}
+  /* ---- 插件配置表单（schema 驱动）---- */
+  #cfg-form{overflow:auto;flex:1;margin:8px 0;padding-right:4px}
+  .cf-group{margin:10px 0 4px;font-size:12px;font-weight:600;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .cf-field{margin:10px 0}
+  .cf-label{display:block;font-size:13px;font-weight:600;margin-bottom:4px}
+  .cf-help{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45}
+  .cf-field input[type=text],.cf-field input[type=password],.cf-field input[type=number],
+  .cf-field select,.cf-field textarea{width:100%;background:#10151d;color:var(--fg);
+    border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13px}
+  .cf-field input[type=color]{width:52px;height:32px;padding:0;border:1px solid var(--line);
+    border-radius:6px;background:#10151d}
+  .cf-inline{display:flex;gap:8px;align-items:center}
+  .cf-inline input[type=text]{flex:1}
+  .cf-unit{font-size:12px;color:var(--muted)}
+  .cf-check{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+  .cf-check input{width:16px;height:16px;accent-color:var(--acc)}
+  .cf-rows{display:flex;flex-direction:column;gap:6px}
+  .cf-rowitem{display:flex;gap:6px;align-items:center}
+  .cf-bad input,.cf-bad select,.cf-bad textarea{border-color:#e86a5a!important}
+  .cf-err{color:#e86a5a;font-size:11.5px;margin-top:3px}
+  .cf-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;
+    border-top:1px solid var(--line);padding-top:10px}
+  .cf-tabs button.on{background:var(--acc);color:#08101c}
+  .cf-advanced{margin:10px 0;border:1px dashed var(--line);border-radius:6px;padding:8px}
+  .cf-advanced>summary{cursor:pointer;font-size:12.5px;color:var(--muted)}
   #loginbox{position:fixed;inset:0;background:var(--bg);z-index:20;display:none;
     align-items:center;justify-content:center}
   #loginbox .card{width:340px;text-align:center}
@@ -106,10 +133,22 @@
 
 <div id="cfgbox" onclick="if(event.target===this)closeCfg()">
   <div class="box">
-    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-      <b id="cfg-title">配置</b><button class="mini" onclick="closeCfg()">关闭</button></div>
-    <textarea id="cfg-text" spellcheck="false"></textarea>
-    <div style="margin-top:8px;text-align:right"><button class="btn" onclick="saveCfg()">保存</button></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <b id="cfg-title">配置</b>
+      <span class="muted" id="cfg-src" style="font-size:11.5px;flex:1"></span>
+      <span class="cf-tabs">
+        <button class="mini on" id="tab-form" onclick="cfgTab('form')">表单</button>
+        <button class="mini" id="tab-json" onclick="cfgTab('json')">JSON</button>
+      </span>
+      <button class="mini" onclick="closeCfg()">关闭</button>
+    </div>
+    <div id="cfg-form"></div>
+    <textarea id="cfg-text" class="hidden" spellcheck="false"></textarea>
+    <div class="cf-foot">
+      <span class="muted" id="cfg-msg" style="font-size:12px"></span>
+      <span><button class="mini" onclick="cfgReload()">重新载入</button>
+      <button class="btn" onclick="saveCfg()">保存</button></span>
+    </div>
   </div>
 </div>
 <div id="loginbox">
@@ -437,22 +476,292 @@ async function pollLogs() {
 }
 
 let cfgTarget = null;
+/* ================= 插件配置：schema 驱动表单 =================
+   可配置项由**插件自己声明**（模块级 __config_schema__ 或 PluginMeta.config_schema），
+   面板只实现「字段类型 → 控件」这一套映射，所以所有插件通吃：
+     text / textarea / number / bool / select / multiselect / list
+     password / group_select / color / file（+ json 兜底嵌套对象）
+   没声明的插件按当前值推断字段，并注明"自动推断"，另外永远保留 JSON 原文编辑。 */
+const CFG = { aid:'', name:'', payload:null, tab:'form', groups:null, groupErr:'', dirty:false };
+
+function cfgEsc(v) { return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function cfgOpts(f) { return (f.options||[]).map(o =>
+  `<option value="${cfgEsc(o.value)}">${cfgEsc(o.label)}</option>`).join(''); }
+
+/* 每种类型的控件。field.value 是当前值，data-k 是取值用的键 */
+function cfgControl(f, value, path) {
+  const k = `data-k="${cfgEsc(path)}"`;
+  const ph = f.placeholder ? ` placeholder="${cfgEsc(f.placeholder)}"` : '';
+  switch (f.type) {
+    case 'textarea':
+      return `<textarea ${k} rows="${f.rows||4}"${ph}>${cfgEsc(value)}</textarea>`;
+    case 'json':
+      return `<textarea ${k} rows="${f.rows||5}" spellcheck="false">${cfgEsc(
+        typeof value === 'string' ? value : JSON.stringify(value==null?{}:value, null, 2))}</textarea>
+        <div class="cf-help">JSON 格式，保存时校验</div>`;
+    case 'number':
+      return `<div class="cf-inline"><input type="number" ${k} value="${cfgEsc(value)}"`
+        + `${f.min!=null?` min="${f.min}"`:''}${f.max!=null?` max="${f.max}"`:''}`
+        + `${f.step!=null?` step="${f.step}"`:''}>`
+        + `${f.unit?`<span class="cf-unit">${cfgEsc(f.unit)}</span>`:''}</div>`;
+    case 'bool':
+      return `<label class="cf-check"><input type="checkbox" ${k} ${value?'checked':''}>`
+        + `<span>${value?'已开启':'已关闭'}</span></label>`;
+    case 'select':
+      return `<select ${k}><option value="">（未设置）</option>${cfgOpts(f)}</select>`;
+    case 'multiselect':
+      return `<div class="cf-rows">` + (f.options||[]).map(o => {
+        const on = Array.isArray(value) && value.map(String).includes(String(o.value));
+        return `<label class="cf-check"><input type="checkbox" data-multi="${cfgEsc(path)}"`
+          + ` value="${cfgEsc(o.value)}" ${on?'checked':''}><span>${cfgEsc(o.label)}</span></label>`;
+      }).join('') + `</div>`;
+    case 'list':
+      return cfgList(f, Array.isArray(value)?value:[], path);
+    case 'password':
+      return `<div class="cf-inline"><input type="${f.secret===false?'text':'password'}" ${k}`
+        + ` value="${cfgEsc(value)}"${ph} autocomplete="new-password">`
+        + `<button class="mini" type="button" onclick="cfgPeek(this)">显示</button></div>`;
+    case 'group_select':
+      return cfgGroupSelect(f, value, path);
+    case 'color':
+      return `<div class="cf-inline"><input type="color" data-color="${cfgEsc(path)}"`
+        + ` value="${cfgEsc(value||'#1E40AF')}">`
+        + `<input type="text" ${k} value="${cfgEsc(value)}" placeholder="#1E40AF"></div>`;
+    case 'file':
+      return `<input type="text" ${k} value="${cfgEsc(value)}"`
+        + `${f.accept?` placeholder="路径（${cfgEsc(f.accept)}）"`:''}>`
+        + (f.accept?`<div class="cf-help">可接受：${cfgEsc(f.accept)}</div>`:'');
+    default:
+      return `<input type="text" ${k} value="${cfgEsc(value)}"`
+        + `${f.maxlength?` maxlength="${f.maxlength}"`:''}${ph}>`;
+  }
+}
+
+function cfgListItemControl(f, value, path) {
+  const t = f.item_type || 'text';
+  if (t === 'bool') return `<input type="checkbox" data-item="${cfgEsc(path)}" ${value?'checked':''}>`;
+  if (t === 'number') return `<input type="number" data-item="${cfgEsc(path)}" value="${cfgEsc(value)}" style="flex:1">`;
+  if (t === 'select') return `<select data-item="${cfgEsc(path)}" style="flex:1"><option value="">（未设置）</option>${cfgOpts(f)}</select>`;
+  return `<input type="text" data-item="${cfgEsc(path)}" value="${cfgEsc(value)}" style="flex:1">`;
+}
+
+function cfgList(f, values, path) {
+  const rows = values.map((v,i) => `<div class="cf-rowitem">`
+    + cfgListItemControl(f, v, `${path}[${i}]`)
+    + `<button class="mini" type="button" onclick="cfgListDel(this)">删除</button></div>`).join('');
+  return `<div class="cf-rows" data-list="${cfgEsc(path)}" data-item-type="${f.item_type||'text'}">`
+    + rows + `<div><button class="mini" type="button" onclick="cfgListAdd(this)">+ 添加一项</button></div></div>`;
+}
+
+/* 群号选择器：从机器人已加入的群拉取（/api/accounts/<aid>/groups） */
+function cfgGroupSelect(f, value, path) {
+  const vals = Array.isArray(value) ? value.map(String)
+    : (value==null||value==='' ? [] : [String(value)]);
+  if (CFG.groupErr) {
+    // 拉不到群列表时不能把用户卡死：退化成手填
+    return `<input type="text" ${f.multiple?'data-multi-text':'data-k'}="${cfgEsc(path)}"`
+      + ` value="${cfgEsc(vals.join(','))}" placeholder="群号，多个用英文逗号分隔">`
+      + `<div class="cf-help">此刻拉不到群列表（${cfgEsc(CFG.groupErr)}），可手填群号</div>`;
+  }
+  const opts = (CFG.groups||[]).map(g => {
+    const id = String(g.group_id||g.id||'');
+    const nm = g.group_name||g.name||'';
+    return `<option value="${cfgEsc(id)}" ${vals.includes(id)?'selected':''}>`
+      + `${cfgEsc(nm?`${nm}（${id}）`:id)}</option>`;
+  }).join('');
+  // 已选但不在列表里的群（比如机器人已退群）也要显示，否则一保存就丢
+  const extra = vals.filter(v => !(CFG.groups||[]).some(g => String(g.group_id||g.id||'')===v))
+    .map(v => `<option value="${cfgEsc(v)}" selected>${cfgEsc(v)}（当前列表里没有）</option>`).join('');
+  return `<select ${f.multiple!==false?'multiple size="5"':''} data-multi-select="${cfgEsc(path)}">`
+    + extra + opts + `</select><div class="cf-help">从机器人已加入的群拉取`
+    + `${f.multiple!==false?'（可多选，按住 Ctrl/⌘）':'（单选）'}`
+    + `　<button class="mini" type="button" onclick="cfgLoadGroups(true)">刷新群列表</button></div>`;
+}
+
+function cfgRender() {
+  const p = CFG.payload || { fields:[], declared:false };
+  const box = $('#cfg-form');
+  if (!p.fields.length) {
+    box.innerHTML = `<div class="muted" style="padding:12px 0">这个插件没有可配置项。`
+      + `需要的话可以在插件里声明 <code>__config_schema__</code>，或切到 JSON 页签直接编辑。</div>`;
+    return;
+  }
+  let html = '', lastGroup = null, advOpen = false;
+  for (const f of p.fields) {
+    if (f.advanced && !advOpen) { html += `<details class="cf-advanced"><summary>高级选项</summary>`; advOpen = true; }
+    const g = f.group || '';
+    if (!f.advanced && g && g !== lastGroup) { html += `<div class="cf-group">${cfgEsc(g)}</div>`; lastGroup = g; }
+    html += cfgField(f);
+  }
+  if (advOpen) html += `</details>`;
+  box.innerHTML = html;
+  cfgBindLive();
+}
+
+function cfgField(f) {
+  return `<div class="cf-field" data-field="${cfgEsc(f.name)}">`
+    + `<label class="cf-label">${cfgEsc(f.label||f.name)}`
+    + `${f.required?' <span style="color:#e86a5a">*</span>':''}`
+    + `<span class="muted" style="font-weight:400;font-size:11px"> · ${cfgEsc(f.type)}</span></label>`
+    + cfgControl(f, f.value, f.name)
+    + (f.help?`<div class="cf-help">${cfgEsc(f.help)}</div>`:'')
+    + `<div class="cf-err" hidden></div></div>`;
+}
+
+function cfgBindLive() {
+  document.querySelectorAll('#cfg-form [data-color]').forEach(el => {
+    el.oninput = () => { const t = el.parentNode.querySelector('input[type=text]'); if (t) t.value = el.value; };
+  });
+  document.querySelectorAll('#cfg-form input[type=checkbox][data-k]').forEach(el => {
+    el.onchange = () => { const s = el.parentNode.querySelector('span'); if (s) s.textContent = el.checked?'已开启':'已关闭'; };
+  });
+}
+
+function cfgPeek(btn) {
+  const inp = btn.parentNode.querySelector('input');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.textContent = show ? '隐藏' : '显示';
+}
+function cfgListAdd(btn) {
+  const box = btn.closest('[data-list]');
+  const t = box.dataset.itemType || 'text';
+  const div = document.createElement('div');
+  div.className = 'cf-rowitem';
+  div.innerHTML = cfgListItemControl({item_type:t, options:[]}, '', box.dataset.list + '[new]')
+    + '<button class="mini" type="button" onclick="cfgListDel(this)">删除</button>';
+  box.insertBefore(div, box.lastElementChild);
+}
+function cfgListDel(btn) { btn.closest('.cf-rowitem').remove(); }
+
+/* 收集表单值 → 对象 */
+function cfgCollect() {
+  const out = {};
+  document.querySelectorAll('#cfg-form [data-k]').forEach(el => { out[el.dataset.k] = cfgReadOne(el); });
+  document.querySelectorAll('#cfg-form [data-multi]').forEach(el => {
+    const k = el.dataset.multi; if (!out[k]) out[k] = [];
+    if (el.checked) out[k].push(el.value);
+  });
+  document.querySelectorAll('#cfg-form [data-multi-select]').forEach(el => {
+    out[el.dataset.multiSelect] = Array.from(el.selectedOptions).map(o => o.value);
+  });
+  document.querySelectorAll('#cfg-form [data-list]').forEach(box => {
+    out[box.dataset.list] = Array.from(box.querySelectorAll('.cf-rowitem')).map(row => {
+      const el = row.querySelector('[data-item]');
+      if (!el) return '';
+      return el.type === 'checkbox' ? el.checked : cfgReadOne(el);
+    });
+  });
+  // 只在 JSON 页签里编辑过的键，表单页不动它（切页签时会先合并）
+  for (const [k,v] of Object.entries(CFG.payload && CFG.payload.values || {})) {
+    if (!(k in out)) out[k] = v;
+  }
+  return out;
+}
+function cfgReadOne(el) {
+  if (el.type === 'checkbox') return el.checked;
+  if (el.type === 'number') return el.value === '' ? 0 : Number(el.value);
+  return el.value;
+}
+
+function cfgTab(which) {
+  if (which === CFG.tab) return;
+  if (which === 'json') {
+    // 表单 → JSON：把当前表单值写进去，切页签不丢改动的半边
+    $('#cfg-text').value = JSON.stringify(cfgCollect(), null, 2);
+  } else {
+    let obj; try { obj = JSON.parse($('#cfg-text').value); }
+    catch(e) { cfgMsg('JSON 格式错误，无法切回表单：' + e.message, true); return; }
+    CFG.payload.values = obj;
+    CFG.payload.fields.forEach(f => { if (f.name in obj) f.value = obj[f.name]; });
+    cfgRender();
+  }
+  CFG.tab = which;
+  $('#cfg-form').classList.toggle('hidden', which !== 'form');
+  $('#cfg-text').classList.toggle('hidden', which !== 'json');
+  $('#tab-form').classList.toggle('on', which === 'form');
+  $('#tab-json').classList.toggle('on', which === 'json');
+}
+
+function cfgMsg(text, bad) {
+  const el = $('#cfg-msg');
+  el.textContent = text || '';
+  el.style.color = bad ? '#e86a5a' : 'var(--muted)';
+}
+function cfgFieldError(name, msg) {
+  const box = document.querySelector(`#cfg-form [data-field="${CSS.escape(name)}"]`);
+  if (!box) return;
+  box.classList.toggle('cf-bad', !!msg);
+  const e = box.querySelector('.cf-err');
+  e.hidden = !msg; e.textContent = msg || '';
+}
+
+async function cfgLoadGroups(force) {
+  if (CFG.groups && !force) return;
+  CFG.groupErr = '';
+  const s = await j(`/api/accounts/${CFG.aid}/groups`);
+  if (s.ok && Array.isArray(s.data)) CFG.groups = s.data;
+  else { CFG.groups = []; CFG.groupErr = (s.error||'接口不可用'); }
+  if (force) { cfgRender(); cfgMsg(`已刷新群列表（${CFG.groups.length} 个）`); }
+}
+
 async function editCfg(aid, name) {
-  cfgTarget = [aid, name];
-  const s = await j(`/api/accounts/${aid}/plugins/${name}/config`);
-  $('#cfg-title').textContent = name + ' · 配置';
-  $('#cfg-text').value = s.ok ? JSON.stringify(s.data, null, 2) : '{}';
+  CFG.aid = aid; CFG.name = name; CFG.tab = 'form'; CFG.groups = null; CFG.groupErr = '';
+  $('#cfg-title').textContent = `${name} · 配置`;
   $('#cfgbox').style.display = 'flex';
+  $('#cfg-form').innerHTML = '<div class="muted" style="padding:12px 0">载入中…</div>';
+  $('#cfg-text').value = '';
+  cfgMsg('');
+  const s = await j(`/api/accounts/${aid}/plugins/${name}/schema`);
+  if (!s.ok) {
+    $('#cfg-form').innerHTML = '';
+    cfgMsg(s.error || '读不到配置声明', true);
+    return;
+  }
+  CFG.payload = s.data;
+  const needsGroups = (s.data.fields||[]).some(f => f.type === 'group_select');
+  if (needsGroups) await cfgLoadGroups(false);
+  cfgRender();
+  cfgTab('form');
+  $('#tab-form').classList.add('on'); $('#tab-json').classList.remove('on');
+  $('#cfg-form').classList.remove('hidden'); $('#cfg-text').classList.add('hidden');
+  // 来源徽标放标题旁边（一眼看出这是插件声明的，还是面板猜的）
+  $('#cfg-src').textContent = s.data.declared
+    ? `由插件声明（${s.data.declared_by||'__config_schema__'}）`
+    : '插件未声明配置项 · 以下字段按当前值自动推断';
+  cfgMsg('');
 }
+
+async function cfgReload() { if (CFG.name) await editCfg(CFG.aid, CFG.name); }
+
 async function saveCfg() {
-  const [aid, name] = cfgTarget;
-  let obj; try { obj = JSON.parse($('#cfg-text').value); }
-  catch(e) { alert('JSON 解析失败: ' + e.message); return; }
-  await j(`/api/accounts/${aid}/plugins/${name}/config`,
-           {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj)});
-  $('#cfgbox').style.display = 'none';
+  let obj;
+  if (CFG.tab === 'json') {
+    try { obj = JSON.parse($('#cfg-text').value); }
+    catch(e) { cfgMsg('JSON 解析失败：' + e.message, true); return; }
+  } else {
+    obj = cfgCollect();
+  }
+  document.querySelectorAll('#cfg-form .cf-bad').forEach(el => el.classList.remove('cf-bad'));
+  document.querySelectorAll('#cfg-form .cf-err').forEach(el => { el.hidden = true; });
+  const s = await j(`/api/accounts/${CFG.aid}/plugins/${CFG.name}/config`,
+    {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj)});
+  if (!s.ok) {
+    const errs = s.field_errors || {};
+    let n = 0;
+    for (const [k,v] of Object.entries(errs)) { cfgFieldError(k, v); n++; }
+    cfgMsg(s.error + (n ? `（${n} 个字段有问题，已标红）` : ''), true);
+    return;
+  }
+  cfgMsg('已保存 ✓' + (s.data && s.data.validated ? '' : '（该插件未声明 schema，未做类型校验）'));
+  await loadAccounts();
 }
-function closeCfg() { $('#cfgbox').style.display = 'none'; }
+
+function closeCfg() {
+  $('#cfgbox').style.display = 'none';
+  CFG.payload = null; CFG.name = '';
+}
 
 (async function init(){
   // 先定传输通道（桌面 js_api / 浏览器 HTTP），再装 fetch 垫片，最后才开始取数据
