@@ -12,6 +12,7 @@ from pathlib import Path
 from astercore import __version__
 from astercore.core.manager import AccountConfig
 from astercore.web.auth import AuthConfig
+from astercore.web import ui_pages as _ui      # 面板页面片段（内容由后端生成，前端只挂载）
 from typing import Any, Awaitable, Callable
 
 log = logging.getLogger("astercore.web")
@@ -86,6 +87,25 @@ class WebPanel:
         @app.get("/")
         def index():
             return send_from_directory(self.static_dir, "index.html")
+
+        # 面板用相对路径引用两端共用的表单资产（cfg_form.js/css），这样
+        # file:// 桌面模式与浏览器模式都能加载；这里给出对应的 HTTP 路由。
+        @app.get("/cfg_form.js")
+        def shared_cfg_form_js():
+            return send_from_directory(self.static_dir, "cfg_form.js")
+
+        @app.get("/cfg_form.css")
+        def shared_cfg_form_css():
+            return send_from_directory(self.static_dir, "cfg_form.css")
+
+        # 面板外壳与样式同样两端共用（file:// 桌面模式也走相对路径）
+        @app.get("/panel.js")
+        def shared_panel_js():
+            return send_from_directory(self.static_dir, "panel.js")
+
+        @app.get("/panel.css")
+        def shared_panel_css():
+            return send_from_directory(self.static_dir, "panel.css")
 
         @app.get("/api/info")
         def api_info():
@@ -215,6 +235,25 @@ class ManagerWebPanel:
         except Exception:
             return None
 
+    # ---------- 运行方式（接口与页面片段共用同一份口径） ----------
+    def _runtime_payload(self) -> dict:
+        """app_state 缺失时如实降级为空（例如测试里只给 manager 不给 app_state）"""
+        st = self.app_state
+        if st is None:
+            return {"state": {}, "modes": {}}
+        from astercore.app import BACKEND_MODES
+        return {
+            "state": {
+                "backend_mode": st.backend_mode,
+                "wizard_completed": st.wizard_completed,
+                "needs_wizard": st.needs_wizard(),
+                "risk_acknowledged": st.risk_acknowledged,
+            },
+            "modes": {k: {kk: vv for kk, vv in v.items()
+                          if kk in ("label", "risk", "desc", "needs_ack")}
+                      for k, v in BACKEND_MODES.items()},
+        }
+
     def _routes(self) -> None:
         app = self.app
         mgr = self.manager
@@ -222,6 +261,25 @@ class ManagerWebPanel:
         @app.get("/")
         def index():
             return send_from_directory(self.static_dir, "index.html")
+
+        # 面板用相对路径引用两端共用的表单资产（cfg_form.js/css），这样
+        # file:// 桌面模式与浏览器模式都能加载；这里给出对应的 HTTP 路由。
+        @app.get("/cfg_form.js")
+        def shared_cfg_form_js():
+            return send_from_directory(self.static_dir, "cfg_form.js")
+
+        @app.get("/cfg_form.css")
+        def shared_cfg_form_css():
+            return send_from_directory(self.static_dir, "cfg_form.css")
+
+        # 面板外壳与样式同样两端共用（file:// 桌面模式也走相对路径）
+        @app.get("/panel.js")
+        def shared_panel_js():
+            return send_from_directory(self.static_dir, "panel.js")
+
+        @app.get("/panel.css")
+        def shared_panel_css():
+            return send_from_directory(self.static_dir, "panel.css")
 
         # ---------- 账号 ----------
         @app.get("/api/info")
@@ -343,6 +401,9 @@ class ManagerWebPanel:
             if rt is None:
                 return _err("账号未运行", 404)
             items = rt.list_plugins()
+            # 供面板显示人类可读的名字（共用外壳按 `display` 取值，与 Linux 端同约定）
+            for it in items:
+                it["display"] = it.get("name_cn") or it.get("name")
             # 附加原生宿主崩溃计数
             for it in items:
                 lp = rt.plugin_loader.loaded.get(it["name"])
@@ -383,7 +444,14 @@ class ManagerWebPanel:
             rt = _rt_of(aid)
             if rt is None:
                 return _err("账号未运行", 404)
-            return _ok(rt.get_plugin_schema(name))
+            payload = rt.get_plugin_schema(name)
+            # 面板标题与保存提示用人类可读的插件名（取不到就退回插件 key）
+            payload["plugin_name"] = name
+            for it in rt.list_plugins():
+                if it.get("name") == name:
+                    payload["plugin_name"] = it.get("name_cn") or name
+                    break
+            return _ok(payload)
 
         @app.post("/api/accounts/<aid>/plugins/<name>/config")
         def api_acct_plugin_config_save(aid: str, name: str):
@@ -422,6 +490,83 @@ class ManagerWebPanel:
             name = request.args.get("name")
             n = run_coro_sync(self._loop(), rt.reload_plugins(name))
             return _ok({"plugin_count": n})
+
+
+        # ---------- 页面片段：骨架在共用的 panel.js，页面内容由这里生成 ----------
+        def _acct_status(aid: str) -> dict:
+            rt = _rt_of(aid)
+            if rt is None:
+                return {"running": False, "connected": False}
+            try:
+                st = rt.backend.status()
+            except Exception:
+                st = {}
+            return {"running": True, "backend": rt.backend.name,
+                    "plugin_count": len(rt.list_plugins()),
+                    "account_id": str(rt.account_id), **st}
+
+        def _page_ctx(page: str) -> dict:
+            """只取该页真正要用的数据（少查一点就快一点）"""
+            aid = (request.args.get("aid") or "").strip()
+            ctx = {"current": aid}
+            cfg = mgr.get_config(aid) if aid else None
+            if cfg is not None:
+                ctx["account"] = {
+                    "account_id": aid,
+                    "display_name": cfg.display_name,
+                    "backend_name": cfg.backend_name,
+                    **_acct_status(aid),
+                }
+            if page == "accounts":
+                ctx["accounts"] = mgr.scan()
+                edit = (request.args.get("edit") or "").strip()
+                ecfg = mgr.get_config(edit) if edit else None
+                if ecfg is not None:
+                    ctx["editing"] = {
+                        "account_id": ecfg.account_id,
+                        "display_name": ecfg.display_name,
+                        "ws_url": getattr(ecfg, "ws_url", ""),
+                        "http_url": getattr(ecfg, "http_url", ""),
+                        "access_token": getattr(ecfg, "access_token", ""),
+                    }
+            if page == "dashboard":
+                ctx["info"] = _info_payload(
+                    _rt_of(aid) if aid else None,
+                    data_dir=getattr(mgr, "data_root", ""),
+                    accounts_dir=getattr(mgr, "accounts_dir", ""),
+                    plugin_dir=getattr(mgr, "plugin_dir", None))
+                rt = _rt_of(aid)
+                ctx["plugins"] = rt.list_plugins() if rt is not None else []
+            if page == "config":
+                pkey = (request.args.get("plugin") or "").strip()
+                rt = _rt_of(aid)
+                items = rt.list_plugins() if rt is not None else []
+                if not pkey and items:
+                    pkey = items[0].get("name") or ""
+                ctx["plugin_key"] = pkey
+                for it in items:
+                    if it.get("name") == pkey:
+                        # 操作栏标题用人类可读名（`list_plugins()` 里是 name_cn）
+                        ctx["plugin_name"] = (it.get("display") or it.get("name_cn")
+                                              or pkey)
+            if page == "settings-runtime":
+                ctx["runtime"] = self._runtime_payload()
+            if page == "settings-auth":
+                authed = self.auth.mode == "none" or bool(session.get("ac_auth"))
+                ctx["auth"] = {"authed": authed, "mode": self.auth.mode,
+                               "config": self.auth.public()}
+            return ctx
+
+        @app.get("/ui/page/<page>")
+        def ui_page(page: str):
+            if page not in _ui.PAGES:
+                return _err(f"未知页面: {page}", 404)
+            return _ok(_ui.render_page(page, _page_ctx(page)))
+
+        @app.get("/ui/status")
+        def ui_status():
+            """状态区片段（通用形状 {html:{id:内容}, text:{id:文本}}，与 Linux 端同一套）"""
+            return _ok(_ui.render_status(_page_ctx("dashboard")))
 
         @app.get("/api/accounts/<aid>/groups")
         def api_acct_groups(aid: str):
@@ -502,17 +647,7 @@ class ManagerWebPanel:
 
         @app.get("/api/settings/runtime")
         def api_runtime_get():
-            return _ok({
-                "state": {
-                    "backend_mode": st.backend_mode,
-                    "wizard_completed": st.wizard_completed,
-                    "needs_wizard": st.needs_wizard(),
-                    "risk_acknowledged": st.risk_acknowledged,
-                },
-                "modes": {k: {kk: vv for kk, vv in v.items()
-                              if kk in ("label", "risk", "desc", "needs_ack")}
-                          for k, v in BACKEND_MODES.items()},
-            })
+            return _ok(self._runtime_payload())
 
         @app.post("/api/settings/runtime")
         def api_runtime_set():

@@ -1,170 +1,42 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<title>栖星 AsterCore · 面板</title>
-<style>
-  :root { --bg:#14181f; --card:#1d232c; --line:#2a3340; --fg:#d7e0ea;
-          --muted:#7f8ea3; --accent:#6ea8fe; --ok:#3fb96f; --off:#5a6472; }
-  * { box-sizing:border-box; margin:0; }
-  body { background:var(--bg); color:var(--fg);
-         font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
-         padding:24px; max-width:980px; margin:0 auto; }
-  h1 { font-size:18px; } .sub { color:var(--muted); font-size:12px; margin:4px 0 18px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
-          padding:14px 16px; margin-bottom:14px; }
-  .acct { display:flex; align-items:center; gap:12px; padding:10px 2px;
-          border-bottom:1px solid var(--line); cursor:pointer; }
-  .acct:last-child { border-bottom:none; }
-  .acct.sel { background:#1e2632; border-radius:8px; padding:10px 8px; }
-  .dot { width:9px; height:9px; border-radius:50%; background:var(--off);
-         display:inline-block; margin-right:6px; }
-  .dot.on { background:var(--ok); }
-  .btn { background:var(--accent); color:#0b1220; border:none; border-radius:6px;
-         padding:4px 12px; cursor:pointer; font-weight:600; margin-left:auto; }
-  .btn.ghost { background:var(--off); color:#dbe4ee; }
-  button.mini { background:#3a4656; color:#cfd9e4; border:none; border-radius:5px;
-                padding:2px 8px; cursor:pointer; margin-left:6px; font-size:12px; }
-  .pl { display:flex; justify-content:space-between; padding:7px 2px;
-        border-bottom:1px solid var(--line); }
-  .pl:last-child { border-bottom:none; }
-  .pl .n { font-weight:600; } .pl .d { color:var(--muted); font-size:12px; }
-  .row { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
-  input { background:#10151d; border:1px solid var(--line); color:var(--fg);
-          border-radius:6px; padding:6px 8px; width:130px; }
-  input.wide { width:250px; }
-  #logs { font-family:Consolas,monospace; font-size:12px; max-height:240px; overflow:auto; }
-  #logs .l { padding:2px 0; border-bottom:1px dashed #232c38; }
-  .lvl-debug{color:#7f8ea3}.lvl-info{color:#d7e0ea}.lvl-warn{color:#e8b34b}
-  .lvl-error{color:#e86a5a}
-  .muted{color:var(--muted)} .hidden{display:none}
-  #cfgbox textarea{width:100%;background:#10151d;color:var(--fg);
-    border:1px solid var(--line);border-radius:6px;font-family:Consolas,monospace;
-    font-size:12px;padding:8px}
-  #cfg-text{height:240px}
-  #cfgbox{position:fixed;inset:0;background:rgba(8,10,14,.72);display:none;
-    align-items:center;justify-content:center;z-index:9}
-  #cfgbox .box{background:var(--card);border:1px solid var(--line);border-radius:10px;
-    padding:16px;width:620px;max-width:92vw;max-height:88vh;display:flex;flex-direction:column}
-  /* ---- 插件配置表单（schema 驱动）---- */
-  #cfg-form{overflow:auto;flex:1;margin:8px 0;padding-right:4px}
-  .cf-group{margin:10px 0 4px;font-size:12px;font-weight:600;color:var(--muted);
-    text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line);padding-bottom:4px}
-  .cf-field{margin:10px 0}
-  .cf-label{display:block;font-size:13px;font-weight:600;margin-bottom:4px}
-  .cf-help{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45}
-  .cf-field input[type=text],.cf-field input[type=password],.cf-field input[type=number],
-  .cf-field select,.cf-field textarea{width:100%;background:#10151d;color:var(--fg);
-    border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13px}
-  .cf-field input[type=color]{width:52px;height:32px;padding:0;border:1px solid var(--line);
-    border-radius:6px;background:#10151d}
-  .cf-inline{display:flex;gap:8px;align-items:center}
-  .cf-inline input[type=text]{flex:1}
-  .cf-unit{font-size:12px;color:var(--muted)}
-  .cf-check{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
-  .cf-check input{width:16px;height:16px;accent-color:var(--acc)}
-  .cf-rows{display:flex;flex-direction:column;gap:6px}
-  .cf-rowitem{display:flex;gap:6px;align-items:center}
-  .cf-bad input,.cf-bad select,.cf-bad textarea{border-color:#e86a5a!important}
-  .cf-err{color:#e86a5a;font-size:11.5px;margin-top:3px}
-  .cf-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;
-    border-top:1px solid var(--line);padding-top:10px}
-  .cf-tabs button.on{background:var(--acc);color:#08101c}
-  .cf-advanced{margin:10px 0;border:1px dashed var(--line);border-radius:6px;padding:8px}
-  .cf-advanced>summary{cursor:pointer;font-size:12.5px;color:var(--muted)}
-  #loginbox{position:fixed;inset:0;background:var(--bg);z-index:20;display:none;
-    align-items:center;justify-content:center}
-  #loginbox .card{width:340px;text-align:center}
-  #loginbox input{width:100%;margin:8px 0}
-</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>栖星 AsterCore</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><path fill=%22%231E40AF%22 d=%22M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.3 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z%22/></svg>">
+<!-- 两端共用的面板样式与外壳（与 Linux 版同一份字节，见 mybot2/tests/test_dual_end_assets.py） -->
+<link rel="stylesheet" href="panel.css">
+<link rel="stylesheet" href="cfg_form.css">
 </head>
 <body>
-  <div style="display:flex;justify-content:space-between;align-items:baseline">
-    <div><h1>栖星 AsterCore</h1>
-    <div class="sub">多账号面板 · <span id="link">正在连接机器人核心…</span> <span id="ver" class="muted"></span></div></div>
-    <div><span id="authmode" class="muted" style="font-size:12px"></span>
-      <button class="mini" id="btnRunMode" onclick="showRunMode()">运行方式</button>
-      <button class="mini" id="btnSecure" style="display:none" onclick="showSecure()">安全设置</button>
-      <button class="mini" id="btnLogout" style="display:none" onclick="doLogout()">退出</button></div>
-  </div>
-
-  <div class="card">
-    <div style="display:flex;justify-content:space-between">
-      <b>账号</b>
-      <button class="btn" onclick="showNew()">+ 新建账号</button>
+<!-- 登录闸门（仅在需要鉴权时显示）：进程内桌面模式不受影响 -->
+<div id="loginGate" class="ui-modal" hidden>
+  <div class="ui-modal-backdrop"></div>
+  <div class="ui-modal-box">
+    <h2 class="ui-modal-title">需要登录</h2>
+    <div class="ui-modal-msg" id="gateHint">请输入访问密码</div>
+    <div class="cf-field" style="margin-top:10px">
+      <input type="password" id="gatePwd" autocomplete="current-password" placeholder="密码 / 令牌">
     </div>
-    <div id="newform" class="hidden" style="margin-top:10px">
-      <div class="row">
-        <input id="n_id" placeholder="账号ID（QQ）">
-        <input id="n_name" placeholder="显示名">
-        <input id="n_ws" class="wide" placeholder="WS 地址" value="ws://127.0.0.1:3001">
-        <input id="n_http" class="wide" placeholder="HTTP（可选）" value="http://127.0.0.1:3000">
-        <input id="n_token" class="wide" placeholder="access_token（可选）">
-        <button class="btn" onclick="createAcct()">保存</button>
-        <button class="mini" onclick="hideNew()">取消</button>
-        <span class="muted" id="chkMsg" style="font-size:12px"></span>
-      </div>
-    </div>
-    <div id="accts">加载中…</div>
-  </div>
-
-  <div class="card">
-    <b>插件</b> <span class="muted" id="curAcct"></span>
-    <div class="muted" id="plugDir" style="font-size:12px;margin:4px 0"></div>
-    <div id="plugins">（先启动/选择账号）</div>
-  </div>
-
-  <div class="card">
-    <b>调试台</b> <span class="muted" id="curAcct2"></span>
-    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-      <select id="grpSel" style="background:#10151d;border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 8px;min-width:190px"></select>
-      <input id="msgText" placeholder="要发送的文本…" style="flex:1;background:#10151d;border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 8px">
-      <button class="btn" onclick="sendDbg()">发送</button>
-      <button class="mini" onclick="loadGroups()">刷新群</button>
-    </div>
-    <div class="muted" style="font-size:12px;margin-top:6px" id="dbgMsg"></div>
-  </div>
-
-  <div class="card">
-    <div style="display:flex;justify-content:space-between"><b>实时日志</b>
-      <button class="mini" onclick="$('#logs').innerHTML=''">清空</button></div>
-    <div id="logs"></div>
-  </div>
-
-<div id="cfgbox" onclick="if(event.target===this)closeCfg()">
-  <div class="box">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-      <b id="cfg-title">配置</b>
-      <span class="muted" id="cfg-src" style="font-size:11.5px;flex:1"></span>
-      <span class="cf-tabs">
-        <button class="mini on" id="tab-form" onclick="cfgTab('form')">表单</button>
-        <button class="mini" id="tab-json" onclick="cfgTab('json')">JSON</button>
-      </span>
-      <button class="mini" onclick="closeCfg()">关闭</button>
-    </div>
-    <div id="cfg-form"></div>
-    <textarea id="cfg-text" class="hidden" spellcheck="false"></textarea>
-    <div class="cf-foot">
-      <span class="muted" id="cfg-msg" style="font-size:12px"></span>
-      <span><button class="mini" onclick="cfgReload()">重新载入</button>
-      <button class="btn" onclick="saveCfg()">保存</button></span>
+    <div class="ui-modal-actions">
+      <button class="btn btn-primary" id="gateBtn">登录</button>
     </div>
   </div>
 </div>
-<div id="loginbox">
-  <div class="card">
-    <h1>栖星 AsterCore</h1>
-    <div class="muted" style="margin:6px 0 12px" id="loginHint">请输入访问密码</div>
-    <input id="loginInput" type="password" placeholder="密码 / Token">
-    <button class="btn" style="width:100%" onclick="doLogin()">登录</button>
-  </div>
-</div>
+<script src="cfg_form.js"></script>
+<script src="panel.js"></script>
 <script>
-const $ = s => document.querySelector(s);
+/* ==========================================================================
+   Windows 桌面面板（栖星 AsterCore）：与 Linux 面板**同一套界面**。
+   这里只声明"接口在哪 / 显示哪些页 / 少数桌面端特有行为"，界面代码全在 panel.js。
 
-/* 本地存储：桌面版窗口加载的是本地文件（file://），Chromium 系在 file:// 下
-   可能禁用 localStorage —— 直接访问会让**整段脚本死掉**（面板白屏）。
-   所以套一层带内存兜底的 store。（施工手册 §8.1/§5 的同类"静默全崩"风险）*/
+   本文件特有（Linux 面板不需要）的是**传输层**：桌面窗口加载的是本地文件
+   （file://），窗口里的请求走 js_api 进程内 RPC，而不是 HTTP。
+   ========================================================================== */
+
+/* 本地存储：桌面窗口走 file://，Chromium 系在该协议下可能禁用 localStorage ——
+   直接访问会让**整段脚本死掉**（面板白屏）。所以套一层带内存兜底的 store。*/
 const store = (() => {
   try {
     localStorage.setItem('__ac_probe', '1'); localStorage.removeItem('__ac_probe');
@@ -213,7 +85,7 @@ const Transport = (() => {
   }
 
   /* fetch 兜底垫片：桌面模式下把同源/相对 URL 的请求转成 js_api。
-     这样既有 5 处 fetch 调用点一行都不用改，**将来新加的前端代码也自动走对通道**。*/
+     这样既有 fetch 调用点一行都不用改，**将来新加的前端代码也自动走对通道**。*/
   function installFetchShim() {
     if (mode !== 'jsapi' || window.__acShim) return;
     window.__acShim = true;
@@ -232,549 +104,313 @@ const Transport = (() => {
   return { detect, call, installFetchShim, get mode() { return mode; } };
 })();
 
-async function j(u, o) {
-  o = o || {};
-  const h = o.headers || {};
+/* 桌面端与页面胶水的唯一 HTTP 入口：带 Bearer（token 模式）+ 走 Transport */
+const j = function (url, opts) {
+  opts = opts || {};
+  const h = opts.headers || {};
   if (authToken) h['Authorization'] = 'Bearer ' + authToken;
-  o.headers = h;
-  const jd = await Transport.call(u, o);
-  if (jd && jd.ok === false && (jd.error === '未登录' || (jd.error||'').includes('Token'))) {
-    showLogin(); throw new Error(jd.error);
-  }
-  return jd;
-}
-async function loadInfo() {
-  try {
-    const s = await j('/api/info');
-    if (!s.ok) return;
-    const d = s.data || {};
-    $('#ver').textContent = 'v' + (d.version || '?');
-    const pd = d.plugin_dir || d.accounts_dir || '';
-    if (pd) $('#plugDir').innerHTML = '插件目录：<code>' + esc(pd) + '</code>'
-      + '（把 .py / .pyd / .dll 放进该目录，点插件「重载」生效）';
-  } catch (e) { /* 信息展示失败不影响使用 */ }
-}
-async function checkAuth() {
-  const s = await fetch('/api/auth/status').then(r => r.json());
-  const st = s.data || {};
-  $('#authmode').textContent = '模式: ' + ({none:'免密',password:'密码',token:'Token'}[st.mode]||st.mode);
-  if (st.mode !== 'none') {
-    if (st.need) showLogin();
-    else { $('#btnLogout').style.display=''; }
-  } else { $('#loginbox').style.display='none'; }
-  $('#btnSecure').style.display = '';
-  return st;
-}
-function showLogin() {
-  $('#loginHint').textContent = '请输入访问凭证';
-  $('#loginbox').style.display = 'flex';
-}
-async function doLogin() {
-  const v = $('#loginInput').value;
-  const mode = ((await fetch('/api/auth/status').then(r=>r.json())).data||{}).mode;
-  const s = await j('/api/login', {method:'POST',
-    headers:{'Content-Type':'application/json'}, body: JSON.stringify({password:v, token:v})});
-  if (s.ok) { $('#loginbox').style.display='none'; location.reload(); }
-  else alert('登录失败');
-}
-async function doLogout() { await fetch('/api/logout',{method:'POST'}); location.reload(); }
-async function showRunMode() {
-  const st = await j('/api/settings/runtime');
-  if (!st.ok) { alert('运行方式设置不可用'); return; }
-  const modes = st.data.modes, cur = st.data.state.backend_mode;
-  let opts = '';
-  for (const k in modes) {
-    const m = modes[k];
-    opts += `\n${k}: ${m.label}（风险 ${'★'.repeat(m.risk)}${m.needs_ack?' 需确认风险':''}）`;
-  }
-  const mode = prompt('选择运行方式（当前 ' + cur + '）:' + opts + '\n\n输入关键字: napcat / lagrange / null');
-  if (!mode) return;
-  const needAck = modes[mode] && modes[mode].needs_ack;
-  const ack = needAck ? confirm('⚠️ 该模式为非官方协议，存在账号风控/封号风险，建议小号。已知晓风险并继续？') : false;
-  if (needAck && !ack) { alert('已取消（需确认风险）'); return; }
-  const r = await j('/api/settings/runtime', {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({backend_mode: mode, ack_risk: ack})});
-  alert(r.ok ? ('已设为 ' + mode) : ('失败: ' + (r.error||'')));
+  opts.headers = h;
+  return fetch(url, opts).then(function (r) { return r.json(); });
+};
+const post = function (url, body) {
+  return j(url, {
+    method: 'POST',
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+};
+let AID = new URLSearchParams(location.search).get('aid') || '';   // 当前账号
+let ACCTS = [], PLUGINS = {};
+
+/* 页面 → 是否需要"当前账号" */
+const PER_ACCOUNT = { dashboard: 1, config: 1, logs: 1 };
+function acctUrl(suffix) { return '/api/accounts/' + encodeURIComponent(AID) + suffix; }
+function pageUrl(page) {
+  let url = '/ui/page/' + page;
+  const q = [];
+  if (PER_ACCOUNT[page] && AID) q.push('aid=' + encodeURIComponent(AID));
+  if (page === 'config' && PANEL.key) q.push('plugin=' + encodeURIComponent(PANEL.key));
+  return url + (q.length ? '?' + q.join('&') : '');
 }
 
-async function showSecure() {
-  const cfg = (await j('/api/settings/auth', {method:'POST',
-    headers:{'Content-Type':'application/json'}, body: JSON.stringify({})})).config
-    || (await fetch('/api/auth/status').then(r=>r.json())).data.config;
-  const mode = cfg.mode;
-  const sel = prompt('鉴权模式: 输入 none / password / token（当前: ' + mode + '）');
-  if (!sel) return;
-  const body = {mode: sel};
-  if (sel === 'password') { const pw = prompt('设置密码（留空不设）'); if (pw) body.password = pw; }
-  if (sel === 'token') { const rt = prompt('是否重置 Token？输入 yes'); if (rt === 'yes') body.rotate_token = true; }
-  const res = await j('/api/settings/auth', {method:'POST',
-    headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-  if (res.ok && res.data && res.data.token) alert('新 Token: ' + res.data.token);
-  alert('已保存（mode=' + (res.data && res.data.mode || sel) + '）');
-  await checkAuth();
-}
-let cur = null, lastTs = 0;
-const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+PANEL.endpoints = {
+  page: pageUrl,
+  headerStatus: function () { return AID ? acctUrl('/status') : null; },
+  status: function () { return '/ui/status' + (AID ? '?aid=' + encodeURIComponent(AID) : ''); },
+  plugins: function () { return AID ? acctUrl('/plugins') : null; },
+  schema: function (k) { return acctUrl('/plugins/' + encodeURIComponent(k) + '/schema'); },
+  saveConfig: function (k, cfg, raw) {
+    return post(acctUrl('/plugins/' + encodeURIComponent(k) + '/config') + (raw ? '?raw=1' : ''), cfg);
+  },
+  logs: function (sfx, lines) { return acctUrl('/logs?limit=' + lines); },
+  headerButtons: null
+};
 
+/* 与 Linux 端同一套导航；桌面端多「账号」「运行方式」「安全设置」 */
+PANEL.nav = [
+  { id: 'dashboard', icon: '📊', label: '概览', group: '概览' },
+  { id: 'accounts', icon: '👥', label: '账号', group: '管理', sub: true },
+  { id: 'config', icon: '⚙️', label: '插件配置', group: '管理', sub: true },
+  { id: 'logs', icon: '📋', label: '运行日志', group: '管理' },
+  { id: 'settings-runtime', icon: '🛠️', label: '运行方式', group: '设置' },
+  { id: 'settings-auth', icon: '🔒', label: '安全设置', group: '设置' }
+];
+
+/* 账号列表（侧边栏二级菜单 + 账号页共用） */
 async function loadAccounts() {
-  let s;
-  try { s = await j('/api/accounts'); }
-  catch(e) {
-    $('#accts').innerHTML = '<span style="color:#e86a5a">加载失败: ' + esc(e.message||e) + '</span>';
-    return;
-  }
-  if (!s.ok) { $('#accts').innerHTML = '<span style="color:#e86a5a">' + esc(s.error||'接口错误') + '</span>'; return; }
-  for (const a of s.data) {
-    if (a.running) {
-      j(`/api/accounts/${a.account_id}/status`).then(st => {
-        if (st.ok) {
-          const el = document.getElementById('st-'+a.account_id);
-          if (el) el.textContent = '· 运行中' + (st.data.connected?'':' (连接中)');
-        }
-      });
-    }
-  }
-  $('#accts').innerHTML = s.data.map(a => `
-    <div class="acct ${cur===a.account_id?'sel':''}" onclick="pick('${a.account_id}')">
-      <span class="dot ${a.running?'on':''}"></span>
-      <b>${esc(a.display_name)}</b>
-      <span class="muted">${a.account_id}</span>
-      <span class="muted" id="st-${a.account_id}">${a.running?'· 运行中':'· 未运行'}</span>
-      <span class="muted">${a.backend_name}</span>
-      <span style="margin-left:auto">
-        <button class="mini" onclick="event.stopPropagation();toggleAcct('${a.account_id}',${a.running})">${a.running?'停止':'启动'}</button>
-        <button class="mini" onclick="event.stopPropagation();editAcct('${a.account_id}','${a.backend_name}')">编辑</button>
-        <button class="mini" onclick="event.stopPropagation();delAcct('${a.account_id}')">删除</button>
-      </span>
-    </div>`).join('');
-
-  // 打开页面即自动选中正在运行的账号：插件/调试台/日志立即可用，不必先点一下
-  if (!cur) {
-    const running = s.data.find(a => a.running);
-    if (running) await pick(running.account_id);
-  }
+  const d = await j('/api/accounts');
+  ACCTS = (d && d.data) || [];
+  if (!AID && ACCTS.length) AID = ACCTS.find(function (a) { return a.running; })?.account_id || ACCTS[0].account_id;
+  return ACCTS;
 }
-
-async function loadGroups() {
-  if (!cur) { $('#grpSel').innerHTML='<option value="">先选账号</option>'; return; }
-  const s = await j(`/api/accounts/${cur}/groups`);
-  if (s.ok) {
-    $('#grpSel').innerHTML = (s.data||[]).map(g =>
-      `<option value="${g.group_id}">${g.group_name||g.group_id} (${g.group_id})</option>`).join('')
-      || '<option value="">（无群/账号未运行）</option>';
-  }
-}
-async function sendDbg() {
-  const gid = $('#grpSel').value, text = $('#msgText').value.trim();
-  if (!gid || !text) { $('#dbgMsg').textContent='先选群并输入文本'; return; }
-  const s = await j(`/api/accounts/${cur}/send`, {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({group_id: gid, text: text})});
-  $('#dbgMsg').textContent = s.ok ? ('✅ 已发送: ' + text) : ('❌ ' + (s.error||'失败'));
-  $('#msgText').value = '';
-}
-
-async function pick(id) {
-  cur = id;
-  $('#curAcct').textContent = '· 账号 ' + id;
-  $('#curAcct2').textContent = '· ' + id;
-  const st = await j(`/api/accounts/${id}/status`);
-  if (!st.data.running) { $('#plugins').innerHTML='<span class="muted">账号未运行</span>'; return; }
-  const s = await j(`/api/accounts/${id}/plugins`);
-  await loadGroups();
-  $('#plugins').innerHTML = s.data.map(p => {
-    const tag = p.file && p.file.endsWith('.so')||p.file&&p.file.endsWith('.dll') ? ' <span class="muted" title="原生C-ABI(子进程隔离)">[C]</span>'
-      : p.file && p.file.endsWith('.pyd') ? ' <span class="muted" title="Cython发布">[pyd]</span>' : '';
-    const crash = p.crashes ? ` <span style="color:#e86a5a" title="host崩溃次数">⚠${p.crashes}</span>` : '';
-    return `
-    <div class="pl"><div><span class="n">${esc(p.name_cn||p.name)}</span>${tag}${crash}
-      <span class="muted"> v${p.version}</span>
-      <div class="d">${esc(p.description||'')}</div></div>
-      <span style="display:flex;gap:6px">
-        <button class="mini" onclick="editCfg('${id}','${p.name}')">配置</button>
-        <button class="mini" onclick="togglePl('${id}','${p.name}',${p.enabled})">${p.enabled?'停用':'启用'}</button>
-      </span>
-    </div>`; }).join('');
-}
-
-async function toggleAcct(id, running) {
-  await j(`/api/accounts/${id}/${running?'stop':'start'}`, {method:'POST'});
-  if (!running) cur = id;
-  await loadAccounts(); if (cur) await pick(cur);
-}
-
-async function delAcct(id) {
-  if (!confirm('删除账号 '+id+'（含数据目录）？')) return;
-  await j(`/api/accounts/${id}/delete`, {method:'POST'});
-  if (cur===id) cur=null;
-  await loadAccounts();
-}
-
-async function togglePl(aid, name, enabled) {
-  await j(`/api/accounts/${aid}/plugins/${name}/${enabled?'disable':'enable'}`, {method:'POST'});
-  await pick(aid);
-}
-
-function showNew(){ $('#newform').classList.remove('hidden'); }
-function hideNew(){ $('#newform').classList.add('hidden'); editingAcct=null; $('#n_id').disabled=false; }
-
-let editingAcct = null;
-async function editAcct(id, bn) {
-  editingAcct = id;
-  $('#n_id').value = id; $('#n_id').disabled = true;
-  $('#n_name').value = id;
-  $('#n_ws').value = 'ws://127.0.0.1:3001';
-  $('#n_http').value = 'http://127.0.0.1:3000';
-  $('#n_token').value = '';
-  showNew();
-}
-async function createAcct() {
-  const body = {
-    account_id: $('#n_id').value.trim(),
-    display_name: $('#n_name').value.trim() || $('#n_id').value.trim(),
-    backend: { name: 'onebot', ws_url: $('#n_ws').value.trim(),
-               http_url: $('#n_http').value.trim(), access_token: $('#n_token').value.trim() },
-  };
-  if (editingAcct) {
-    const r = await j(`/api/accounts/${editingAcct}/update`, {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({display_name: body.display_name, backend: body.backend})});
-    if (!r.ok) { alert('更新失败: '+(r.error||'')); return; }
-    editingAcct = null; $('#n_id').disabled = false;
-    hideNew(); await loadAccounts(); return;
-  }
-  const r = await j('/api/accounts', {method:'POST', headers:{'Content-Type':'application/json'},
-                                      body: JSON.stringify(body)});
-  if (!r.ok) { alert('创建失败: '+(r.error||'')); return; }
-  hideNew(); await loadAccounts();
-}
-
-/* 日志只保留最近 N 行（施工手册 §6.3）：服务端 LogRing 有上限，但前端一直
-   appendChild —— 机器人日志多的时候，几千个 DOM 节点会直接把页面拖卡。 */
-const LOG_MAX_ROWS = 500;
-function trimLogs(box, max) {
-  while (box.childElementCount > max) box.removeChild(box.firstElementChild);
-}
-
-async function pollLogs() {
-  if (!cur) return;
-  const s = await j(`/api/accounts/${cur}/logs?after=${lastTs}`);
-  if (s.ok && s.data.logs.length) {
-    const box = $('#logs');
-    for (const e of s.data.logs) {
-      lastTs = Math.max(lastTs, e.ts);
-      const t = new Date(e.ts*1000).toTimeString().slice(0,8);
-      const d = document.createElement('div'); d.className='l';
-      d.innerHTML = `<span class="muted">${t}</span> <span class="lvl-${e.level}">[${e.level}]</span>
-        <span class="muted">${esc(e.source)}</span> | ${esc(e.msg)}`;
-      box.appendChild(d);
-    }
-    trimLogs(box, LOG_MAX_ROWS);
-    box.scrollTop = box.scrollHeight;
-  }
-}
-
-let cfgTarget = null;
-/* ================= 插件配置：schema 驱动表单 =================
-   可配置项由**插件自己声明**（模块级 __config_schema__ 或 PluginMeta.config_schema），
-   面板只实现「字段类型 → 控件」这一套映射，所以所有插件通吃：
-     text / textarea / number / bool / select / multiselect / list
-     password / group_select / color / file（+ json 兜底嵌套对象）
-   没声明的插件按当前值推断字段，并注明"自动推断"，另外永远保留 JSON 原文编辑。 */
-const CFG = { aid:'', name:'', payload:null, tab:'form', groups:null, groupErr:'', dirty:false };
-
-function cfgEsc(v) { return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;')
-  .replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function cfgOpts(f) { return (f.options||[]).map(o =>
-  `<option value="${cfgEsc(o.value)}">${cfgEsc(o.label)}</option>`).join(''); }
-
-/* 每种类型的控件。field.value 是当前值，data-k 是取值用的键 */
-function cfgControl(f, value, path) {
-  const k = `data-k="${cfgEsc(path)}"`;
-  const ph = f.placeholder ? ` placeholder="${cfgEsc(f.placeholder)}"` : '';
-  switch (f.type) {
-    case 'textarea':
-      return `<textarea ${k} rows="${f.rows||4}"${ph}>${cfgEsc(value)}</textarea>`;
-    case 'json':
-      return `<textarea ${k} rows="${f.rows||5}" spellcheck="false">${cfgEsc(
-        typeof value === 'string' ? value : JSON.stringify(value==null?{}:value, null, 2))}</textarea>
-        <div class="cf-help">JSON 格式，保存时校验</div>`;
-    case 'number':
-      return `<div class="cf-inline"><input type="number" ${k} value="${cfgEsc(value)}"`
-        + `${f.min!=null?` min="${f.min}"`:''}${f.max!=null?` max="${f.max}"`:''}`
-        + `${f.step!=null?` step="${f.step}"`:''}>`
-        + `${f.unit?`<span class="cf-unit">${cfgEsc(f.unit)}</span>`:''}</div>`;
-    case 'bool':
-      return `<label class="cf-check"><input type="checkbox" ${k} ${value?'checked':''}>`
-        + `<span>${value?'已开启':'已关闭'}</span></label>`;
-    case 'select':
-      return `<select ${k}><option value="">（未设置）</option>${cfgOpts(f)}</select>`;
-    case 'multiselect':
-      return `<div class="cf-rows">` + (f.options||[]).map(o => {
-        const on = Array.isArray(value) && value.map(String).includes(String(o.value));
-        return `<label class="cf-check"><input type="checkbox" data-multi="${cfgEsc(path)}"`
-          + ` value="${cfgEsc(o.value)}" ${on?'checked':''}><span>${cfgEsc(o.label)}</span></label>`;
-      }).join('') + `</div>`;
-    case 'list':
-      return cfgList(f, Array.isArray(value)?value:[], path);
-    case 'password':
-      return `<div class="cf-inline"><input type="${f.secret===false?'text':'password'}" ${k}`
-        + ` value="${cfgEsc(value)}"${ph} autocomplete="new-password">`
-        + `<button class="mini" type="button" onclick="cfgPeek(this)">显示</button></div>`;
-    case 'group_select':
-      return cfgGroupSelect(f, value, path);
-    case 'color':
-      return `<div class="cf-inline"><input type="color" data-color="${cfgEsc(path)}"`
-        + ` value="${cfgEsc(value||'#1E40AF')}">`
-        + `<input type="text" ${k} value="${cfgEsc(value)}" placeholder="#1E40AF"></div>`;
-    case 'file':
-      return `<input type="text" ${k} value="${cfgEsc(value)}"`
-        + `${f.accept?` placeholder="路径（${cfgEsc(f.accept)}）"`:''}>`
-        + (f.accept?`<div class="cf-help">可接受：${cfgEsc(f.accept)}</div>`:'');
-    default:
-      return `<input type="text" ${k} value="${cfgEsc(value)}"`
-        + `${f.maxlength?` maxlength="${f.maxlength}"`:''}${ph}>`;
-  }
-}
-
-function cfgListItemControl(f, value, path) {
-  const t = f.item_type || 'text';
-  if (t === 'bool') return `<input type="checkbox" data-item="${cfgEsc(path)}" ${value?'checked':''}>`;
-  if (t === 'number') return `<input type="number" data-item="${cfgEsc(path)}" value="${cfgEsc(value)}" style="flex:1">`;
-  if (t === 'select') return `<select data-item="${cfgEsc(path)}" style="flex:1"><option value="">（未设置）</option>${cfgOpts(f)}</select>`;
-  return `<input type="text" data-item="${cfgEsc(path)}" value="${cfgEsc(value)}" style="flex:1">`;
-}
-
-function cfgList(f, values, path) {
-  const rows = values.map((v,i) => `<div class="cf-rowitem">`
-    + cfgListItemControl(f, v, `${path}[${i}]`)
-    + `<button class="mini" type="button" onclick="cfgListDel(this)">删除</button></div>`).join('');
-  return `<div class="cf-rows" data-list="${cfgEsc(path)}" data-item-type="${f.item_type||'text'}">`
-    + rows + `<div><button class="mini" type="button" onclick="cfgListAdd(this)">+ 添加一项</button></div></div>`;
-}
-
-/* 群号选择器：从机器人已加入的群拉取（/api/accounts/<aid>/groups） */
-function cfgGroupSelect(f, value, path) {
-  const vals = Array.isArray(value) ? value.map(String)
-    : (value==null||value==='' ? [] : [String(value)]);
-  if (CFG.groupErr) {
-    // 拉不到群列表时不能把用户卡死：退化成手填
-    return `<input type="text" ${f.multiple?'data-multi-text':'data-k'}="${cfgEsc(path)}"`
-      + ` value="${cfgEsc(vals.join(','))}" placeholder="群号，多个用英文逗号分隔">`
-      + `<div class="cf-help">此刻拉不到群列表（${cfgEsc(CFG.groupErr)}），可手填群号</div>`;
-  }
-  const opts = (CFG.groups||[]).map(g => {
-    const id = String(g.group_id||g.id||'');
-    const nm = g.group_name||g.name||'';
-    return `<option value="${cfgEsc(id)}" ${vals.includes(id)?'selected':''}>`
-      + `${cfgEsc(nm?`${nm}（${id}）`:id)}</option>`;
+function renderAccountMenu(sub) {
+  if (!ACCTS.length) { sub.innerHTML = '<div class="nav-sub-loading">还没有账号</div>'; return; }
+  sub.innerHTML = ACCTS.map(function (a) {
+    const active = a.account_id === AID;
+    return '<div class="acct-row ' + (active ? 'active' : '') + '" role="button" tabindex="0"'
+      + ' data-acct-pick="' + PANEL.esc(a.account_id) + '">'
+      + '<span class="status-dot ' + (a.running ? 'green' : 'red') + '"></span>'
+      + '<span class="min-w-0" style="min-width:0;flex:1"><span class="a-name">' + PANEL.esc(a.display_name || a.account_id)
+      + '</span><div class="a-sub">ID ' + PANEL.esc(a.account_id) + ' · ' + PANEL.esc(a.backend_name || '') + '</div></span></div>';
   }).join('');
-  // 已选但不在列表里的群（比如机器人已退群）也要显示，否则一保存就丢
-  const extra = vals.filter(v => !(CFG.groups||[]).some(g => String(g.group_id||g.id||'')===v))
-    .map(v => `<option value="${cfgEsc(v)}" selected>${cfgEsc(v)}（当前列表里没有）</option>`).join('');
-  return `<select ${f.multiple!==false?'multiple size="5"':''} data-multi-select="${cfgEsc(path)}">`
-    + extra + opts + `</select><div class="cf-help">从机器人已加入的群拉取`
-    + `${f.multiple!==false?'（可多选，按住 Ctrl/⌘）':'（单选）'}`
-    + `　<button class="mini" type="button" onclick="cfgLoadGroups(true)">刷新群列表</button></div>`;
+}
+function renderPluginMenu(sub) {
+  const keys = Object.keys(PLUGINS);
+  if (!AID) { sub.innerHTML = '<div class="nav-sub-loading">先选一个账号</div>'; return; }
+  if (!keys.length) { sub.innerHTML = '<div class="nav-sub-loading">账号未运行或没有插件</div>'; return; }
+  sub.innerHTML = keys.map(function (k) {
+    const p = PLUGINS[k], active = PANEL.key === k && PANEL.page === 'config';
+    return '<div class="nav-sub-item ' + (active ? 'active' : '') + '" role="button" tabindex="0"'
+      + (active ? ' aria-current="page"' : '') + ' data-open="config" data-key="' + PANEL.esc(k) + '">'
+      + PANEL.esc(p.display || k) + (p.enabled === false ? ' <span class="el-tag warning">停用</span>' : '')
+      + (PANEL.dirty[k] ? '<span class="unsaved-dot" title="有未保存的修改"></span>' : '') + '</div>';
+  }).join('');
+}
+async function loadPlugins() {
+  if (!AID) { PLUGINS = {}; return; }
+  try {
+    const d = await j(acctUrl('/plugins'));
+    const items = (d && d.data) || [];
+    PLUGINS = {};
+    items.forEach(function (it) { PLUGINS[it.name] = it; });
+  } catch (e) { PLUGINS = {}; }
+  const sub = PANEL.$('sub_config');
+  if (sub) renderPluginMenu(sub);
 }
 
-function cfgRender() {
-  const p = CFG.payload || { fields:[], declared:false };
-  const box = $('#cfg-form');
-  if (!p.fields.length) {
-    box.innerHTML = `<div class="muted" style="padding:12px 0">这个插件没有可配置项。`
-      + `需要的话可以在插件里声明 <code>__config_schema__</code>，或切到 JSON 页签直接编辑。</div>`;
-    return;
+/* 账号切换：保持当前页，只换上下文 */
+async function pickAccount(aid) {
+  AID = aid;
+  PANEL.subOpen.accounts = true;
+  await loadPlugins();
+  const a = ACCTS.find(function (x) { return x.account_id === aid; }) || {};
+  PANEL.$('botName').textContent = a.display_name || aid;
+  PANEL.$('botSub').textContent = 'ID ' + aid + ' · ' + (a.backend_name || '');
+  PANEL.hooks.groupCache = null;
+  await PANEL.renderPage();
+  if (PANEL.page === 'config' && !PANEL.key && Object.keys(PLUGINS).length) {
+    PANEL.key = Object.keys(PLUGINS)[0];
+    await PANEL.renderPage();
   }
-  let html = '', lastGroup = null, advOpen = false;
-  for (const f of p.fields) {
-    if (f.advanced && !advOpen) { html += `<details class="cf-advanced"><summary>高级选项</summary>`; advOpen = true; }
-    const g = f.group || '';
-    if (!f.advanced && g && g !== lastGroup) { html += `<div class="cf-group">${cfgEsc(g)}</div>`; lastGroup = g; }
-    html += cfgField(f);
-  }
-  if (advOpen) html += `</details>`;
-  box.innerHTML = html;
-  cfgBindLive();
 }
 
-function cfgField(f) {
-  return `<div class="cf-field" data-field="${cfgEsc(f.name)}">`
-    + `<label class="cf-label">${cfgEsc(f.label||f.name)}`
-    + `${f.required?' <span style="color:#e86a5a">*</span>':''}`
-    + `<span class="muted" style="font-weight:400;font-size:11px"> · ${cfgEsc(f.type)}</span></label>`
-    + cfgControl(f, f.value, f.name)
-    + (f.help?`<div class="cf-help">${cfgEsc(f.help)}</div>`:'')
-    + `<div class="cf-err" hidden></div></div>`;
-}
-
-function cfgBindLive() {
-  document.querySelectorAll('#cfg-form [data-color]').forEach(el => {
-    el.oninput = () => { const t = el.parentNode.querySelector('input[type=text]'); if (t) t.value = el.value; };
-  });
-  document.querySelectorAll('#cfg-form input[type=checkbox][data-k]').forEach(el => {
-    el.onchange = () => { const s = el.parentNode.querySelector('span'); if (s) s.textContent = el.checked?'已开启':'已关闭'; };
-  });
-}
-
-function cfgPeek(btn) {
-  const inp = btn.parentNode.querySelector('input');
-  const show = inp.type === 'password';
-  inp.type = show ? 'text' : 'password';
-  btn.textContent = show ? '隐藏' : '显示';
-}
-function cfgListAdd(btn) {
-  const box = btn.closest('[data-list]');
-  const t = box.dataset.itemType || 'text';
-  const div = document.createElement('div');
-  div.className = 'cf-rowitem';
-  div.innerHTML = cfgListItemControl({item_type:t, options:[]}, '', box.dataset.list + '[new]')
-    + '<button class="mini" type="button" onclick="cfgListDel(this)">删除</button>';
-  box.insertBefore(div, box.lastElementChild);
-}
-function cfgListDel(btn) { btn.closest('.cf-rowitem').remove(); }
-
-/* 收集表单值 → 对象 */
-function cfgCollect() {
+/* 表单取值：把 data-acct / data-rt / data-auth 标注的控件收成一个对象 */
+function collectForm(attr) {
   const out = {};
-  document.querySelectorAll('#cfg-form [data-k]').forEach(el => { out[el.dataset.k] = cfgReadOne(el); });
-  document.querySelectorAll('#cfg-form [data-multi]').forEach(el => {
-    const k = el.dataset.multi; if (!out[k]) out[k] = [];
-    if (el.checked) out[k].push(el.value);
+  document.querySelectorAll('[data-' + attr + ']').forEach(function (el) {
+    out[el.getAttribute('data-' + attr)] = el.type === 'checkbox' ? el.checked : el.value;
   });
-  document.querySelectorAll('#cfg-form [data-multi-select]').forEach(el => {
-    out[el.dataset.multiSelect] = Array.from(el.selectedOptions).map(o => o.value);
-  });
-  document.querySelectorAll('#cfg-form [data-list]').forEach(box => {
-    out[box.dataset.list] = Array.from(box.querySelectorAll('.cf-rowitem')).map(row => {
-      const el = row.querySelector('[data-item]');
-      if (!el) return '';
-      return el.type === 'checkbox' ? el.checked : cfgReadOne(el);
-    });
-  });
-  // 只在 JSON 页签里编辑过的键，表单页不动它（切页签时会先合并）
-  for (const [k,v] of Object.entries(CFG.payload && CFG.payload.values || {})) {
-    if (!(k in out)) out[k] = v;
-  }
   return out;
 }
-function cfgReadOne(el) {
-  if (el.type === 'checkbox') return el.checked;
-  if (el.type === 'number') return el.value === '' ? 0 : Number(el.value);
-  return el.value;
-}
-
-function cfgTab(which) {
-  if (which === CFG.tab) return;
-  if (which === 'json') {
-    // 表单 → JSON：把当前表单值写进去，切页签不丢改动的半边
-    $('#cfg-text').value = JSON.stringify(cfgCollect(), null, 2);
-  } else {
-    let obj; try { obj = JSON.parse($('#cfg-text').value); }
-    catch(e) { cfgMsg('JSON 格式错误，无法切回表单：' + e.message, true); return; }
-    CFG.payload.values = obj;
-    CFG.payload.fields.forEach(f => { if (f.name in obj) f.value = obj[f.name]; });
-    cfgRender();
-  }
-  CFG.tab = which;
-  $('#cfg-form').classList.toggle('hidden', which !== 'form');
-  $('#cfg-text').classList.toggle('hidden', which !== 'json');
-  $('#tab-form').classList.toggle('on', which === 'form');
-  $('#tab-json').classList.toggle('on', which === 'json');
-}
-
-function cfgMsg(text, bad) {
-  const el = $('#cfg-msg');
+function formMsg(id, text, bad) {
+  const el = PANEL.$(id);
+  if (!el) return;
   el.textContent = text || '';
-  el.style.color = bad ? '#e86a5a' : 'var(--muted)';
-}
-function cfgFieldError(name, msg) {
-  const box = document.querySelector(`#cfg-form [data-field="${CSS.escape(name)}"]`);
-  if (!box) return;
-  box.classList.toggle('cf-bad', !!msg);
-  const e = box.querySelector('.cf-err');
-  e.hidden = !msg; e.textContent = msg || '';
+  el.style.color = bad ? 'var(--color-danger)' : 'var(--text-secondary)';
 }
 
-async function cfgLoadGroups(force) {
-  if (CFG.groups && !force) return;
-  CFG.groupErr = '';
-  const s = await j(`/api/accounts/${CFG.aid}/groups`);
-  if (s.ok && Array.isArray(s.data)) CFG.groups = s.data;
-  else { CFG.groups = []; CFG.groupErr = (s.error||'接口不可用'); }
-  if (force) { cfgRender(); cfgMsg(`已刷新群列表（${CFG.groups.length} 个）`); }
-}
-
-async function editCfg(aid, name) {
-  CFG.aid = aid; CFG.name = name; CFG.tab = 'form'; CFG.groups = null; CFG.groupErr = '';
-  $('#cfg-title').textContent = `${name} · 配置`;
-  $('#cfgbox').style.display = 'flex';
-  $('#cfg-form').innerHTML = '<div class="muted" style="padding:12px 0">载入中…</div>';
-  $('#cfg-text').value = '';
-  cfgMsg('');
-  const s = await j(`/api/accounts/${aid}/plugins/${name}/schema`);
-  if (!s.ok) {
-    $('#cfg-form').innerHTML = '';
-    cfgMsg(s.error || '读不到配置声明', true);
-    return;
+PANEL.hooks = {
+  /* 传输通道：桌面模式走进程内 RPC（file://），浏览器模式走 HTTP —— 都在共用外壳之外 */
+  beforeStart: async function () {
+    try {
+      await Transport.detect();
+      Transport.installFetchShim();
+    } catch (e) { /* 兜底走 HTTP */ }
+    /* 鉴权闸门：需要登录就先登录，否则面板接口全是 401 */
+    const a = await j('/api/auth/status');
+    const st = (a && a.data) || {};
+    const isToken = st.mode === 'token';
+    if (st.need) {
+      const gate = PANEL.$('loginGate');
+      gate.hidden = false;
+      PANEL.$('gateHint').textContent = isToken ? '请输入访问令牌' : '请输入访问密码';
+      const btn = PANEL.$('gateBtn'), pwd = PANEL.$('gatePwd');
+      const doLogin = async function () {
+        const r = await post('/api/login', isToken ? { token: pwd.value } : { password: pwd.value });
+        if (r && r.ok) {
+          /* token 模式：before_request 只认请求头，不认 session —— 必须记住令牌 */
+          if (isToken) { store.setItem('ac_token', pwd.value); authToken = pwd.value; }
+          gate.hidden = true; location.reload();
+        }
+        else PANEL.$('gateHint').textContent = (r && r.error) || '登录失败';
+      };
+      btn.onclick = doLogin;
+      pwd.addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
+      pwd.focus();
+      await new Promise(function () { });      // 等用户登录（登录成功后整页刷新）
+    }
+  },
+  identity: async function () {
+    const d = await j('/api/info');
+    const i = (d && d.data) || {};
+    const ver = PANEL.$('headerExtraSlot');
+    if (ver) {
+      ver.innerHTML = '<span class="el-tag muted">v' + PANEL.esc(i.version || '') + '</span>'
+        + '<span class="el-tag muted" id="transportTag" title="前端 ↔ 内核的通信通道">'
+        + PANEL.esc(Transport.mode === 'jsapi' ? '桌面模式 · 进程内 RPC' : '浏览器模式 · HTTP') + '</span>';
+    }
+    await loadAccounts();
+    if (!AID && ACCTS.length) AID = ACCTS[0].account_id;
+    const a = ACCTS.find(function (x) { return x.account_id === AID; }) || {};
+    PANEL.$('botName').textContent = a.display_name || AID || '栖星 AsterCore';
+    PANEL.$('botSub').textContent = AID ? ('ID ' + AID + ' · ' + (a.backend_name || '')) : '还没有账号';
+    document.title = (a.display_name || 'AsterCore') + ' - 管理面板';
+    await loadPlugins();
+  },
+  logout: function () { post('/api/logout').then(function () { location.reload(); }); },
+  subMenus: {
+    accounts: function (sub) { renderAccountMenu(sub); },
+    config: function (sub) { renderPluginMenu(sub); loadPlugins(); }
+  },
+  mounted: {
+    dashboard: function () { PANEL.startPoll(PANEL.refreshStatusParts, 10000); },
+    logs: function () {
+      PANEL.syncLogState('');
+      PANEL.loadLogs('');
+      if (PANEL.logState('').auto) PANEL.startPoll(function () { PANEL.loadLogs(''); }, 5000);
+    },
+    config: function () { PANEL.renderConfigForm(PANEL.key); }
+  },
+  /* 日志接口返回结构化条目，这里转成共用查看器认识的文本行 */
+  fetchLogs: async function (sfx, lines) {
+    const d = await j(acctUrl('/logs?limit=' + lines));
+    const items = (d && d.data && d.data.logs) || [];
+    const text = items.map(function (e) {
+      const t = new Date((e.ts || 0) * 1000);
+      const p = function (n) { return String(n).padStart(2, '0'); };
+      const ts = p(t.getMonth() + 1) + '-' + p(t.getDate()) + ' ' + p(t.getHours()) + ':' + p(t.getMinutes()) + ':' + p(t.getSeconds());
+      return ts + ' [' + (e.level || 'info') + '] ' + (e.source ? e.source + ' | ' : '') + (e.msg || '');
+    }).join('\n');
+    return { log: text || '暂无日志', total: items.length };
+  },
+  save: {
+    config: function (btn) { PANEL.saveConfig(btn, false); },
+    'settings-runtime': async function (btn) {
+      await PANEL.runBusy(btn, '保存中…', async function () {
+        const r = await post('/api/settings/runtime', collectForm('rt'));
+        if (r && r.ok) { PANEL.toast('运行方式已保存', 'success'); PANEL.renderPage(); }
+        else formMsg('rtMsg', (r && r.error) || '保存失败', true);
+      });
+    },
+    'settings-auth': async function (btn) {
+      await PANEL.runBusy(btn, '保存中…', async function () {
+        const d = collectForm('auth');
+        const r = await post('/api/settings/auth', d);
+        if (r && r.ok) { PANEL.toast('安全设置已保存', 'success'); PANEL.renderPage(); }
+        else formMsg('auMsg', (r && r.error) || '保存失败', true);
+      });
+    }
+  },
+  saveRestart: function (btn) { PANEL.saveConfig(btn, true); },
+  restart: async function () {
+    if (!AID) return { ok: false, error: '没有当前账号' };
+    await post(acctUrl('/stop'));
+    return post(acctUrl('/start'));
+  },
+  loadGroups: async function (force) {
+    if (!AID) return [];
+    if (PANEL.hooks.groupCache && !force) return PANEL.hooks.groupCache;
+    try {
+      const d = await j(acctUrl('/groups'));
+      const list = (d && d.data) || [];
+      PANEL.hooks.groupCache = list.map(function (g) {
+        return { group_id: g.group_id || g.id, group_name: g.group_name || g.name || '' };
+      });
+      PANEL.hooks.groupErr = '';
+    } catch (e) { PANEL.hooks.groupCache = []; PANEL.hooks.groupErr = (e.message || '接口不可用'); }
+    if (force) {
+      await PANEL.renderConfigForm(PANEL.key);
+      PANEL.toast('已刷新群列表（' + (PANEL.hooks.groupCache || []).length + ' 个）', 'success');
+    }
+    return PANEL.hooks.groupCache;
+  },
+  groupSelect: function () { return { groups: PANEL.hooks.groupCache || [], error: PANEL.hooks.groupErr || '' }; },
+  actions: {
+    start: async function (el) { return post(acctUrl('/start'), undefined); },
+    stop: async function (el) { return post(acctUrl('/stop'), undefined); },
+    'reload-plugins': async function (el) { return post(acctUrl('/plugins/reload')); },
+    'create-account': async function (el) {
+      const f = collectForm('acct');
+      if (!f.account_id) { formMsg('acMsg', '账号 ID 必填', true); return { ok: false, error: '账号 ID 必填' }; }
+      const r = await post('/api/accounts', {
+        account_id: f.account_id, display_name: f.display_name || f.account_id,
+        backend: { ws_url: f.ws_url, http_url: f.http_url, access_token: f.access_token }
+      });
+      if (r && r.ok) { AID = f.account_id; await loadAccounts(); await loadPlugins(); PANEL.toast('账号已创建', 'success'); PANEL.renderPage(); }
+      else formMsg('acMsg', (r && r.error) || '创建失败', true);
+      return r || { ok: false };
+    },
+    'edit-account': async function (el) {
+      const aid = el.getAttribute('data-key');
+      const d = await j('/api/accounts/' + encodeURIComponent(aid));
+      PANEL.hooks._editing = aid;
+      const cfg = (d && d.data) || {};
+      /* 编辑态由后端片段渲染（表单里填好现值），这里只切页 */
+      await PANEL.goPage('accounts');
+      return { ok: true, message: '已载入账号 ' + aid };
+    },
+    'save-account': async function (el) {
+      const f = collectForm('acct');
+      const r = await post('/api/accounts/' + encodeURIComponent(f.account_id) + '/update', {
+        display_name: f.display_name, backend: { ws_url: f.ws_url, http_url: f.http_url, access_token: f.access_token }
+      });
+      if (r && r.ok) { PANEL.hooks._editing = null; await loadAccounts(); PANEL.toast('账号已保存', 'success'); PANEL.renderPage(); }
+      else formMsg('acMsg', (r && r.error) || '保存失败', true);
+      return r || { ok: false };
+    },
+    'cancel-edit': async function () { PANEL.hooks._editing = null; await PANEL.renderPage(); return { ok: true, message: '已取消' }; },
+    'del-account': async function (el) {
+      const aid = el.getAttribute('data-key');
+      const r = await post('/api/accounts/' + encodeURIComponent(aid) + '/delete');
+      if (r && r.ok) { if (AID === aid) AID = ''; await loadAccounts(); await loadPlugins(); PANEL.toast('账号已删除', 'success'); PANEL.renderPage(); }
+      return r || { ok: false };
+    },
+    'reset-wizard': async function () {
+      const r = await post('/api/settings/runtime', { action: 'reset_wizard' });
+      if (r && r.ok) PANEL.toast('已重置向导状态', 'success');
+      return r || { ok: false };
+    },
+    'rotate-token': async function () {
+      const r = await post('/api/settings/auth', { rotate_token: true });
+      if (r && r.ok) { PANEL.toast('已重新生成令牌', 'success'); PANEL.renderPage(); }
+      return r || { ok: false };
+    }
   }
-  CFG.payload = s.data;
-  const needsGroups = (s.data.fields||[]).some(f => f.type === 'group_select');
-  if (needsGroups) await cfgLoadGroups(false);
-  cfgRender();
-  cfgTab('form');
-  $('#tab-form').classList.add('on'); $('#tab-json').classList.remove('on');
-  $('#cfg-form').classList.remove('hidden'); $('#cfg-text').classList.add('hidden');
-  // 来源徽标放标题旁边（一眼看出这是插件声明的，还是面板猜的）
-  $('#cfg-src').textContent = s.data.declared
-    ? `由插件声明（${s.data.declared_by||'__config_schema__'}）`
-    : '插件未声明配置项 · 以下字段按当前值自动推断';
-  cfgMsg('');
-}
+};
+/* 账号切换：侧栏与账号页里点 [data-acct-pick] 都走共用外壳的委托 → 进来这里 */
+PANEL.hooks.pickAccount = pickAccount;
 
-async function cfgReload() { if (CFG.name) await editCfg(CFG.aid, CFG.name); }
-
-async function saveCfg() {
-  let obj;
-  if (CFG.tab === 'json') {
-    try { obj = JSON.parse($('#cfg-text').value); }
-    catch(e) { cfgMsg('JSON 解析失败：' + e.message, true); return; }
-  } else {
-    obj = cfgCollect();
+/* 编辑账号时把 aid 带进片段请求（唯一一处拼 edit=，避免重复参数） */
+PANEL._origPageUrl = PANEL.endpoints.page;
+PANEL.endpoints.page = function (p) {
+  let url = PANEL._origPageUrl(p);
+  if (p === 'accounts' && PANEL.hooks._editing) {
+    url += (url.indexOf('?') < 0 ? '?' : '&') + 'edit=' + encodeURIComponent(PANEL.hooks._editing);
   }
-  document.querySelectorAll('#cfg-form .cf-bad').forEach(el => el.classList.remove('cf-bad'));
-  document.querySelectorAll('#cfg-form .cf-err').forEach(el => { el.hidden = true; });
-  const s = await j(`/api/accounts/${CFG.aid}/plugins/${CFG.name}/config`,
-    {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj)});
-  if (!s.ok) {
-    const errs = s.field_errors || {};
-    let n = 0;
-    for (const [k,v] of Object.entries(errs)) { cfgFieldError(k, v); n++; }
-    cfgMsg(s.error + (n ? `（${n} 个字段有问题，已标红）` : ''), true);
-    return;
-  }
-  cfgMsg('已保存 ✓' + (s.data && s.data.validated ? '' : '（该插件未声明 schema，未做类型校验）'));
-  await loadAccounts();
-}
+  return url;
+};
 
-function closeCfg() {
-  $('#cfgbox').style.display = 'none';
-  CFG.payload = null; CFG.name = '';
-}
-
-(async function init(){
-  // 先定传输通道（桌面 js_api / 浏览器 HTTP），再装 fetch 垫片，最后才开始取数据
-  try { await Transport.detect(); Transport.installFetchShim(); } catch(e) { /* 兜底走 HTTP */ }
-  const link = $('#link');
-  if (link) link.textContent = Transport.mode === 'jsapi'
-      ? '桌面模式 · 进程内 RPC' : '浏览器模式 · HTTP';
-  try { await checkAuth(); } catch(e) { /* 鉴权异常不阻断下方 */ }
-  await loadInfo();
-  await loadAccounts();
-  setInterval(async () => { await loadAccounts(); }, 3000);
-  setInterval(pollLogs, 1000);
-})();
+PANEL.start();
 </script>
 </body>
 </html>

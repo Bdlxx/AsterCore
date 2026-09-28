@@ -51,6 +51,18 @@ class ClassPluginTest(unittest.TestCase):
         # 内部计数（无异常即可；计数正确性看插件日志）
         self.assertTrue(True)
 
+    def test_example_declared_schema_is_honored(self):
+        """SDK 示例同样是"类插件 + 模块级 __config_schema__"，声明不能被丢。
+
+        回归见 ShippedTemplateTest.test_template_declared_schema_is_honored。
+        """
+        self.loop.run_until_complete(self.rt.start())
+        p = self.rt.get_plugin_schema("demo_counter")
+        self.assertTrue(p.get("declared"), p)
+        self.assertEqual(p.get("declared_by"), "__config_schema__")
+        names = [f.get("name") for f in (p.get("fields") or [])]
+        self.assertIn("keywords", names)
+
     def test_config_reload_changes_behavior(self):
         self.loop.run_until_complete(self.rt.start())
         # 默认 keywords 不含 "hi" → 放行
@@ -112,6 +124,21 @@ class ShippedTemplateTest(unittest.TestCase):
                    raw="计数器", segments=[seg_text("计数器")])
         self.assertEqual(self.loop.run_until_complete(self.rt.bus.dispatch(ev)),
                          "handled")
+
+    def test_template_declared_schema_is_honored(self):
+        """模板用**模块级** `__config_schema__` 声明配置项 —— 面板必须能读到。
+
+        回归（本轮抓到）：类插件加载时把 `module` 置 None（为的是模块级 `handle`
+        不抢类实例的分发权），模块级声明跟着一起丢了 → 面板只能"按当前值推断"，
+        插件作者写的 label/type/min/max **全部失效**且不报错。
+        """
+        self.loop.run_until_complete(self.rt.start())
+        p = self.rt.get_plugin_schema("demo_counter")
+        self.assertTrue(p.get("declared"), p)
+        self.assertEqual(p.get("declared_by"), "__config_schema__")
+        names = [f.get("name") for f in (p.get("fields") or [])]
+        self.assertIn("keywords", names)
+        self.assertIn("reply", names)
 
 
 if __name__ == "__main__":

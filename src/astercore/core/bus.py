@@ -36,6 +36,7 @@ class LoadedPlugin:
     meta: PluginMeta
     kind: str = "py"              # py(模块/类) | native(原生 DLL/SO)
     module: Any = None            # 模块级插件（函数式）
+    module_ref: Any = None        # 类插件：仅保留模块引用（读 __config_schema__ 等元数据，不参与分发）
     instance: Plugin | None = None  # 类插件
     lib_path: Any = None          # 原生库路径（kind=native）
     native_host: Any = None       # NativeHostProxy（kind=native，activate 后）
@@ -270,6 +271,11 @@ class PluginLoader:
                 # 类插件
                 if isinstance(inst, Plugin):
                     lp.instance = inst
+                    # 模块级 `handle` 不能抢走类实例的分发权（见 LoadedPlugin.handle），
+                    # 所以这里清 module；但模块本身要留着 —— 类插件同样用模块级
+                    # `__config_schema__` 声明配置项（官方示例与首启模板都是这种写法），
+                    # 丢了它，面板就只能"按当前值推断"，声明形同虚设。
+                    lp.module_ref = module
                     lp.module = None
                 src = py_sources[0] if py_sources else None
                 lp.source = src.name if src else f"{name}.py"

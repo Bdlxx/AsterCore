@@ -238,8 +238,10 @@ class AccountRuntime:
         declared_by = ""
         lp = self.plugin_loader.loaded.get(name)
         if lp is not None:
+            # 类插件把 module 置 None（防止模块级 handle 抢分发），模块引用存在 module_ref
+            mod = lp.module if lp.module is not None else getattr(lp, "module_ref", None)
             try:
-                raw = getattr(lp.module, "__config_schema__", None)
+                raw = getattr(mod, "__config_schema__", None)
             except Exception:                   # noqa: BLE001 — 老插件属性异常不该影响面板
                 raw = None
             if raw:

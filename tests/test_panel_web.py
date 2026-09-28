@@ -75,13 +75,14 @@ class PanelStaticTest(unittest.TestCase):
         for needle in ("const Transport", "pywebviewready", "installFetchShim",
                        "window.pywebview.api.rpc", "location.protocol !== 'file:'"):
             self.assertIn(needle, js, f"传输层缺少关键实现: {needle}")
-        # j() 必须走 Transport（否则桌面模式下所有请求都会打到 file:// 上）
-        self.assertIn("await Transport.call(u, o)", js)
-        # 初始化块内必须**先定通道、再开始取数据**
-        init_block = js[js.index("(async function init()"):]
-        self.assertLess(init_block.index("Transport.detect()"),
-                        init_block.index("await checkAuth()"),
-                        "init 里必须先 detect 通道再发请求")
+        # 桌面模式靠 fetch 垫片把同源请求转成 js_api（各调用点一行都不用改）
+        self.assertIn("window.fetch = async", js,
+                      "缺少 fetch 垫片：桌面模式下请求会打到 file:// 上，面板拿不到数据")
+        # 启动流程里必须**先定通道、再开始取数据**（beforeStart 是启动前的唯一钩子）
+        boot = js[js.index("beforeStart"):]
+        self.assertLess(boot.index("Transport.detect()"),
+                        boot.index("'/api/auth/status'"),
+                        "beforeStart 里必须先 detect 通道再发请求")
 
     def test_localstorage_is_guarded(self):
         """file:// 下 localStorage 可能被禁用 —— 裸访问会让整段脚本死掉（白屏）"""

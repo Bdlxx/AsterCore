@@ -48,7 +48,11 @@ TYPE_EXTRA: dict[str, tuple[str, ...]] = {
 }
 
 # 通用字段（所有类型都认）
-COMMON = ("label", "help", "default", "required", "advanced", "group", "readonly")
+# path：值在配置文件里的位置（点号路径，如 "settings.favor_add_max"、"glm.api_key"）。
+#       不写就等于字段名本身。Linux 版老插件的配置是分段的（commands/settings/messages），
+#       面板要能把控件写回正确的那一段，所以字段名与存储位置必须能分开。
+COMMON = ("label", "help", "default", "required", "advanced", "group",
+          "readonly", "path")
 
 # 推断 schema 时，"名字像密码"的键一律按 password 处理（避免 API Key 大喇喇显示在屏幕上）
 SECRET_KEY_RE = re.compile(
@@ -100,9 +104,11 @@ def normalize_field(name: str, raw: Any) -> dict[str, Any]:
 
     field: dict[str, Any] = {"name": name, "type": ftype}
     field["label"] = str(raw.get("label") or name)
-    for key in ("help", "placeholder", "unit", "accept", "group"):
+    for key in ("help", "placeholder", "unit", "accept", "group", "path"):
         if raw.get(key) not in (None, ""):
             field[key] = str(raw[key])
+    if "path" in field:
+        _check_path(field["path"], name)
     for key in ("required", "advanced", "readonly"):
         if raw.get(key):
             field[key] = True
@@ -118,6 +124,15 @@ def normalize_field(name: str, raw: Any) -> dict[str, Any]:
                 field[key] = int(float(raw[key]))
             except (TypeError, ValueError):
                 raise SchemaError(f"字段 {name!r} 的 {key} 必须是数字")
+
+    # 数值字段的默认值必须落在 min/max 内：声明了 min=5 而默认是 0，
+    # 会让用户"什么都不改直接保存"就吃到一条越界错误。
+    if ftype == "number" and isinstance(field.get("default"), (int, float)):
+        lo, hi = field.get("min"), field.get("max")
+        if lo is not None and field["default"] < lo:
+            field["default"] = lo
+        if hi is not None and field["default"] > hi:
+            field["default"] = hi
 
     if "options" in TYPE_EXTRA[ftype]:
         opts = normalize_options(raw.get("options"))
@@ -147,6 +162,66 @@ def normalize_field(name: str, raw: Any) -> dict[str, Any]:
 def _default_for(ftype: str) -> Any:
     return {"bool": False, "number": 0, "multiselect": [], "list": [],
             "json": {}, "group_select": []}.get(ftype, "")
+
+
+# ------------------------------------------------- 值在配置里的位置（点号路径）
+
+def _check_path(path: str, field_name: str) -> None:
+    """path 合法性：非空段、点号分隔。写错了要让插件作者立刻知道。"""
+    parts = path.split(".")
+    if any(not p.strip() for p in parts):
+        raise SchemaError(f"字段 {field_name!r} 的 path {path!r} 有空段（形如 settings.foo）")
+
+
+def field_path(field: dict[str, Any]) -> str:
+    """字段的存储位置：显式 path 优先，否则就是字段名本身。"""
+    return str(field.get("path") or field["name"])
+
+
+def get_path(values: Any, path: str) -> Any:
+    """按点号路径取值；中途缺失返回 None（不抛异常 —— 插件可能刚升级还没写默认值）"""
+    cur = values
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def has_path(values: Any, path: str) -> bool:
+    cur = values
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return False
+        cur = cur[part]
+    return True
+
+
+def set_path(values: dict[str, Any], path: str, value: Any) -> None:
+    """按点号路径写值，中间缺的层级自动建（dict）"""
+    parts = path.split(".")
+    cur = values
+    for part in parts[:-1]:
+        nxt = cur.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[part] = nxt
+        cur = nxt
+    cur[parts[-1]] = value
+
+
+def flatten_values(values: Any, prefix: str = "") -> dict[str, Any]:
+    """把嵌套配置摊平成 {点号路径: 值}（只摊 dict，list 当作叶子）"""
+    out: dict[str, Any] = {}
+    if not isinstance(values, dict):
+        return out
+    for k, v in values.items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict):
+            out.update(flatten_values(v, key + "."))
+        else:
+            out[key] = v
+    return out
 
 
 def normalize_schema(raw: Any) -> tuple[dict[str, dict], list[str]]:
@@ -337,8 +412,13 @@ def validate_and_merge(fields: dict[str, dict], current: dict[str, Any],
       2. 只有在 `strict=True`（插件声明了 schema）时才做类型转换与必填校验；
          推断出来的 schema 只用于渲染，不当法律用
       3. 每个字段的错误单独返回，前端能精确标红到控件
+
+    写入位置由字段的 `path` 决定（缺省等于字段名）。**必须深拷贝**：分段配置
+    （settings/commands/messages）里浅拷贝会让 set_path 改到调用方持有的那个子字典上。
     """
-    merged = dict(current or {})
+    import copy
+    merged: dict[str, Any] = copy.deepcopy(current) if isinstance(current, dict) else {}
+    before = current if isinstance(current, dict) else {}
     errors: dict[str, str] = {}
     if not isinstance(submitted, dict):
         return False, merged, {"_": "提交内容必须是对象"}
@@ -346,22 +426,34 @@ def validate_and_merge(fields: dict[str, dict], current: dict[str, Any],
     for name, value in submitted.items():
         field = fields.get(name)
         if field is None:
-            merged[name] = value               # 未声明的键：原样存
+            # 未声明的键：原样存（点号键按路径写入，与 build_payload 的 flat 视图一致）
+            if "." in name:
+                set_path(merged, name, value)
+            else:
+                merged[name] = value
             continue
         if field.get("readonly"):
             continue
+        path = field_path(field)
         if not strict:
-            merged[name] = value
+            set_path(merged, path, value)
             continue
         ok, val, err = coerce_value(field, value)
         if not ok:
             errors[name] = err
             continue
-        merged[name] = val
+        # 配置文件里本来没有这一项、用户也没改动它（提交值就是声明里的默认值）→ 不写入。
+        # 否则"打开面板点一次保存"就会把插件声明但从未使用过的键（超时、别名键等）
+        # 以 0/空串的形式塞进配置，甚至改坏插件行为。
+        if not has_path(before, path) and _same_value(val, field.get("default")):
+            continue
+        set_path(merged, path, val)
 
     if strict:
         for name, field in fields.items():
-            if field.get("required") and not _has_value(merged.get(name)):
+            # 必填只看**合并后的结果**：声明了 required 就必须有值（这是作者明确的意图，
+            # 桌面端的既有语义与测试都钉住了它）。
+            if field.get("required") and not _has_value(get_path(merged, field_path(field))):
                 errors.setdefault(name, f"{field.get('label') or name}：必填")
     return (not errors), merged, errors
 
@@ -374,6 +466,20 @@ def _has_value(v: Any) -> bool:
     if isinstance(v, (list, dict)):
         return len(v) > 0
     return True
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    """宽松相等：表单里数字是 int/float 混着来的，bool 与 0/1 也别判成"改过"。
+    空串、None、空列表都视为"没设置"（声明里的默认值多是这些）。"""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return bool(a) == bool(b)
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return float(a) == float(b)
+    if a is None or b is None:
+        return not _has_value(a) and not _has_value(b)
+    if isinstance(a, str) and isinstance(b, str):
+        return a.strip() == b.strip()
+    return a == b
 
 
 # ---------------------------------------------------------------- 对外汇总
@@ -393,12 +499,18 @@ def build_payload(declared_raw: Any, values: dict[str, Any]
     out_fields = []
     for name, f in fields.items():
         f = dict(f)
-        f["value"] = values.get(name, f.get("default"))
+        p = field_path(f)
+        present = has_path(values, p)
+        f["value"] = get_path(values, p) if present else f.get("default")
+        # unset：配置文件里当前**没有**这一项（插件声明了它但还没写过）。面板据此提示，
+        # 保存时也不会把声明里的默认值"落地"进配置文件（见 validate_and_merge）。
+        f["unset"] = not present
         out_fields.append(f)
     return {
         "declared": declared,
         "fields": out_fields,
         "values": dict(values or {}),
+        "flat": flatten_values(values),          # {点号路径: 值}，面板做 JSON 视图与脏值比对用
         "schema_errors": decl_errors,
         "types": list(FIELD_TYPES),
     }

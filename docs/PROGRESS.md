@@ -130,4 +130,24 @@ Lagrange 子进程托管 / backend-lagrange / 风险提示 —— 未开始。
 
 ---
 
+## 六、面板「双端同一套界面」收口轮（2026-09-28）
+
+上一轮的面板改版（静态骨架 + 后端片段 + 插件自声明 schema）**只做完了 Linux 端**，
+桌面端留下半成品：`index.html` 换成了薄壳，但传输层（js_api 进程内 RPC）没搬过来，
+且调用点包在 `try/catch` 里 → 桌面模式静默退回 HTTP，面板"能打开、没数据"。
+
+本轮把桌面端做完，并把共用资产的边界钉进测试：
+
+| 项 | 内容 |
+|---|---|
+| 共用资产 6 份 | `config_schema.py` · `panel_pages.py` · `panel.js` · `panel.css` · `cfg_form.js` · `cfg_form.css`（Linux 是主本，`tests/test_dual_end_assets.py` 校验字节一致 + 两条"不许耦合"守卫） |
+| 桌面端传输层 | `store`（file:// localStorage 兜底）+ `Transport`（detect/call/installFetchShim）+ Bearer；头部 `#transportTag` 显示当前通道 |
+| 修的 5 个真 bug | ① Transport 丢失 ② `hooks.pickAccount` 没接线 ③ `P.act` 不传元素（编辑/删除账号永久失效）④ 类插件模块级 `__config_schema__` 被丢 ⑤ 保存回执信封读错层（假提示） |
+| 一并补回 | 日志 DOM 上限 500 行（手册 §6.3）· `group_select` 首屏空下拉 · 删除账号确认键名不一致 · `panel.js` 重复头注释 · 两个 stray 重复文件 |
+| 验证 | Windows **234/234** · Linux **16/16** · `verify_panel_ui` **29/29** · `verify_desktop_transport` **14/14** · `verify_config_form` **33/33** · 冻结包 `e2e_frozen` 29 项 · **Linux 线上面板 15/15** |
+
+细节与踩坑记在 `/root/mybot2/CLAUDE.md` §1.11。
+
+---
+
 *对照文档：《Windows版开发计划书.md》（v0.5，本地）·《ABI草案.md》（v0.2，本地）*

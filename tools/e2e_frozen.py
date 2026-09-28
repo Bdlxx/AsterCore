@@ -158,7 +158,10 @@ def main() -> int:
         with urllib.request.urlopen(f"{base}/", timeout=5) as r:
             html = r.read().decode("utf-8", "replace")
         checks.ok(r.status == 200 and "栖星 AsterCore" in html, "面板首页可打开")
-        checks.ok("plugDir" in html, "面板含插件目录提示")
+        # 新版面板：index.html 只是薄壳（骨架标记在共用的 panel.js 里、页面内容由后端
+        # 片段生成），所以这里只钉"壳与资源挂上了"，页面内容看下面的浏览器级检查。
+        checks.ok("panel.js" in html and "cfg_form.js" in html and 'id="loginGate"' in html,
+                  "面板含共用外壳（panel.js + cfg_form.js + 登录闸门）")
 
         # ---------- 5. 面板建号 → 启动 → 连后端 ----------
         log("检查：通过面板建号并启动")
@@ -227,21 +230,20 @@ def main() -> int:
                     page.on("console", lambda m: js_errors.append(m.text)
                             if m.type == "error" else None)
                     page.on("pageerror", lambda e: js_errors.append(str(e)))
-                    page.goto(base + "/", wait_until="networkidle", timeout=20000)
-                    page.wait_for_timeout(2500)
-                    ver_txt = page.inner_text("#ver").strip()
-                    acct_txt = page.inner_text("#accts").strip()
-                    plug_txt = page.inner_text("#plugins").strip()
-                    dir_txt = page.inner_text("#plugDir").strip()
-                    checks.ok(ver_txt.startswith("v"), f"面板显示版本号 ({ver_txt})")
-                    checks.ok("加载中" not in acct_txt, "账号区未卡在“加载中…”")
-                    checks.ok("验收机器人" in acct_txt or acct in acct_txt,
-                              "账号卡片已渲染")
-                    # 插件区应显示中文插件名（自动选中运行中账号）
-                    checks.ok("打招呼" in plug_txt or "计数器" in plug_txt,
-                              "插件列表已渲染(自动选中运行中账号)",
-                              f"({plug_txt[:80]!r})")
-                    checks.ok("插件目录" in dir_txt, "面板显示插件目录提示")
+                    page.goto(base + "/", wait_until="domcontentloaded", timeout=20000)
+                    # 面板有轮询（5–15s），`networkidle` 永远等不到 → 固定等待
+                    page.wait_for_timeout(3500)
+                    head_txt = page.inner_text("#headerExtraSlot").strip()
+                    page_txt = page.inner_text("#pageContent").strip()
+                    checks.ok("v" in head_txt, f"面板显示版本号 ({head_txt!r})")
+                    checks.ok("加载中" not in page_txt, "页面未卡在“加载中…”")
+                    checks.ok("验收机器人" in page_txt or acct in page_txt,
+                              "概览页已渲染（自动选中运行中账号）")
+                    # 插件区应显示中文插件名（概览页的插件列表）
+                    checks.ok("打招呼" in page_txt or "计数器" in page_txt,
+                              "插件列表已渲染",
+                              f"({page_txt[:80]!r})")
+                    checks.ok("插件目录" in page_txt, "面板显示插件目录提示")
                     checks.ok(not js_errors, "面板无 JS 报错", f"({js_errors[:2]})")
                     page.screenshot(path=str(Path(tmp) / "panel.png"), full_page=True)
                     log(f"  面板截图: {Path(tmp) / 'panel.png'}")
