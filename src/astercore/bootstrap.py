@@ -97,7 +97,13 @@ def find_ffmpeg(base_dir: Path) -> str | None:
     老插件用的是**裸命令名**调用（video_parser_core/utils.py 里 cmd 的第一项就是
     字符串 "ffmpeg"），所以只要让它在 PATH 里能被找到，插件一行都不用改。
     查找顺序：FFMPEG_PATH → <基准目录>/tools/ffmpeg/bin → <基准目录>/tools/ffmpeg
-              → 系统 PATH
+              → <_MEIPASS>/tools/ffmpeg/bin → <_MEIPASS>/tools/ffmpeg
+              → <_MEIPASS 的上一级>/tools/ffmpeg[/bin] → 系统 PATH
+
+    ⚠ 为什么要查 `_MEIPASS`：PyInstaller 6 的 onedir 会把 spec 里的 datas 放进
+    **contents 目录**（`_internal/`），所以 `tools/ffmpeg/bin/ffmpeg.exe` 实际落在
+    `<exe 同级>/_internal/tools/ffmpeg/bin/` —— 只认 `<exe 同级>/tools/...` 的话
+    随包 ffmpeg **形同虚设**（真机 v0.3.0 就是这么踩的：包里有 100MB 的 exe，程序却报找不到）。
     """
     exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
     cands: list[Path] = []
@@ -106,6 +112,13 @@ def find_ffmpeg(base_dir: Path) -> str | None:
         cands.append(Path(env).expanduser())
     cands += [Path(base_dir) / "tools" / "ffmpeg" / "bin" / exe,
               Path(base_dir) / "tools" / "ffmpeg" / exe]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        mp = Path(meipass)
+        cands += [mp / "tools" / "ffmpeg" / "bin" / exe,
+                  mp / "tools" / "ffmpeg" / exe,
+                  mp.parent / "tools" / "ffmpeg" / "bin" / exe,
+                  mp.parent / "tools" / "ffmpeg" / exe]
     for c in cands:
         try:
             if c.is_file():

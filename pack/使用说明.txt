@@ -6,7 +6,7 @@
 一个 QQ 机器人框架：多账号、可换后端、插件式、自带网页面板。
 面板地址默认 http://127.0.0.1:8080 （启动后会自动打开浏览器）。
 
-解压后约 400 MB（本次起**自带视频解析的依赖与 ffmpeg**，所以比上一版大很多）。
+解压后约 200 MB（本次起**自带视频解析的依赖与 ffmpeg**，所以比上一版大很多）。
 
 
 二、怎么运行
@@ -21,8 +21,8 @@
   data\       账号数据、插件配置、运行状态
   accounts\   账号连接配置
   plugins\    插件目录 —— 把 .py/.pyd/.dll 放这里就会被加载（已预置 2 个示例插件）
-  tools\ffmpeg\bin\ffmpeg.exe   视频解析用的转码器（随包自带，无需另装）
   runtime.log 运行日志
+（转码器 ffmpeg 也随包放在 _internal\tools\ffmpeg\bin\ 里，程序会自己找到，你不用管）
 
 
 三、让机器人上线（需要 NapCat）
@@ -77,8 +77,9 @@ A: 依次看三处：① 日志里有没有 `[解析器] 已启用平台:` 这�
    ② 该群的分群开关是否打开（面板 → 群组）；③ 该平台是否需要 Cookie/登录。
 
 Q: 提示 ffmpeg 找不到
-A: 正常情况下 tools\ffmpeg\bin\ffmpeg.exe 随包就有。若你删掉了，可任选一种补回：
-   把它放回该目录、加进 PATH、或设环境变量 FFMPEG_PATH 指向它。
+A: 随包就带着（_internal\tools\ffmpeg\bin\ffmpeg.exe）。若被杀软/清理工具删了，任选一种补回：
+   把 ffmpeg.exe 放到 <解压目录>\tools\ffmpeg\bin\（程序也认这个位置）、加进系统 PATH、
+   或设环境变量 FFMPEG_PATH 指向它。
 
 Q: 浏览器打开是旧界面
 A: 按 Ctrl+F5 强制刷新（浏览器缓存）。

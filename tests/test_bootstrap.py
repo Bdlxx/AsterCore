@@ -3,9 +3,11 @@
 # 背景：打包版必须"解压双击即可用"——目录自动创建、示例插件自动播种，
 # 且数据目录不随启动位置乱跑（冻结时以 exe 所在目录为基准）。
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from astercore import __version__
 from astercore import paths
@@ -129,6 +131,37 @@ class LegacyEnvTest(unittest.TestCase):
                                 "（老插件用的是裸命令名，不会自己去别处找）")
             finally:
                 os.environ["PATH"] = old
+
+    def test_find_ffmpeg_finds_bundled_under_meipass(self):
+        """PyInstaller 6 的 onedir 把 spec 的 datas 放进 `_internal/`（=sys._MEIPASS）：
+        随包 ffmpeg 实际在 `<exe 同级>/_internal/tools/ffmpeg/bin/`。
+
+        真机回归（v0.3.0 第一次出包）：包里躺着 100MB 的 ffmpeg.exe，但程序只查
+        `<exe 同级>/tools/…` → 启动日志报"找不到 ffmpeg"、视频解析全废。
+        """
+        from astercore.bootstrap import find_ffmpeg
+        with tempfile.TemporaryDirectory() as td:
+            exe_dir = Path(td) / "app"
+            exe_dir.mkdir()
+            meipass = exe_dir / "_internal"
+            exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+            bundled = meipass / "tools" / "ffmpeg" / "bin" / exe_name
+            bundled.parent.mkdir(parents=True)
+            bundled.write_bytes(b"MZ")
+            old_path = os.environ.get("PATH", "")
+            old_ff = os.environ.pop("FFMPEG_PATH", None)
+            os.environ["PATH"] = td              # 系统 PATH 里没有 ffmpeg
+            try:
+                with mock.patch.object(sys, "_MEIPASS", str(meipass), create=True):
+                    found = find_ffmpeg(exe_dir)
+                self.assertEqual(found, str(bundled),
+                                 "只认 <exe 同级>/tools/… 会漏掉 _internal 下的随包 ffmpeg")
+                self.assertTrue(os.environ["PATH"].startswith(str(bundled.parent)),
+                                "找到后必须把目录插到 PATH 最前面")
+            finally:
+                os.environ["PATH"] = old_path
+                if old_ff is not None:
+                    os.environ["FFMPEG_PATH"] = old_ff
 
     def test_find_ffmpeg_none_when_missing(self):
         from astercore.bootstrap import find_ffmpeg
