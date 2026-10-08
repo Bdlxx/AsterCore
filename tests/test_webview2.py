@@ -334,6 +334,9 @@ class DecideTransportTest(unittest.TestCase):
         self.assertIsNotNone(st)
         self.assertEqual(st.code, wv2.RUNTIME_MISSING)
 
+    @unittest.skipIf(sys.platform.startswith("win"),
+                     "本用例验证的是**非 Windows** 分支：Windows 上 WebView2 检测本来就适用，"
+                     "detect() 会返回真实状态而不是 None（真机验证时抓到过）")
     def test_non_windows_with_pywebview_uses_webview(self):
         """Linux/macOS：WebView2 检测不适用，有 pywebview 就直接用"""
         with mock.patch("astercore.shell.ShellApp.webview_available",
