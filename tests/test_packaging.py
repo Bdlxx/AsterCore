@@ -81,6 +81,32 @@ class ParserDependencyTest(unittest.TestCase):
         self.assertIn("tools/fetch_ffmpeg.py", wf, "CI 没取 ffmpeg.exe")
         self.assertIn("PyInstaller", wf)
 
+    def test_spec_collects_pythonnet_and_registers_runtime_hook(self):
+        """内嵌窗口（pythonnet/pywebview）必须收全 + 挂 runtime hook。
+
+        真机 v0.3.0 教训：pythonnet 只在 pywebview 真建窗口时才 import，藏得深。
+        没收全 / 没挂 hook 时不会构建失败，而是运行时
+        "Failed to resolve Python.Runtime.Loader.Initialize" → **静默回退浏览器**，
+        桌面版就没窗口了（现场只留一条 WARNING，极难发现）。
+        """
+        spec = (ROOT / "pack" / "astercore.spec").read_text(encoding="utf-8")
+        for pkg in ("pythonnet", "clr_loader"):
+            self.assertIn(f"'{pkg}'", spec, f"spec 没 collect_all({pkg})")
+        self.assertIn("rth_pythonnet.py", spec, "spec 没挂 pack/rth_pythonnet.py 这个 runtime hook")
+
+        hook = (ROOT / "pack" / "rth_pythonnet.py").read_text(encoding="utf-8")
+        self.assertIn("PYTHONNET_RUNTIME", hook, "hook 必须强制 netfx 运行时")
+        self.assertIn("PYTHONNET_PYDLL", hook, "hook 必须把包内 pythonXY.dll 指给 pythonnet")
+        self.assertIn("add_dll_directory", hook, "hook 必须把包内目录加进 DLL 搜索路径")
+        self.assertIn("Zone.Identifier", hook, "hook 要清 MOTW（浏览器下载的 zip 解压后会带）")
+
+    def test_runtime_hook_is_valid_python(self):
+        """hook 在 exe 启动最早期执行，语法/名字错了就是"整个程序起不来"。"""
+        import ast
+        src = (ROOT / "pack" / "rth_pythonnet.py").read_text(encoding="utf-8")
+        ast.parse(src)
+        self.assertIn("_setup()", src, "hook 末尾必须真的调用 _setup()，否则等于没挂")
+
 
 def _raw_dist_specs() -> set[str]:
     import tomllib

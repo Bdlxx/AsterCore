@@ -25,6 +25,21 @@ for _opt in ('webview', 'pystray', 'PIL', 'waitress'):
     except Exception:
         pass
 
+# pythonnet + clr_loader：**内嵌窗口的关键**。pywebview 的 winforms 后端走 pythonnet，
+# 而 pythonnet 的 netfx 路径要用 clr_loader 的原生 ClrLoader.dll 建 AppDomain。
+# 这两包只在 pywebview 真正建窗口时才 import，隐藏得深 → 必须 collect_all：
+# 它会把 pythonnet/runtime/*.dll（含 Python.Runtime.dll）与 clr_loader 的原生库都收进来。
+# （真机 v0.3.0：没收全时 pywebview 报 "Failed to resolve Python.Runtime.Loader.Initialize"
+#   然后静默回退浏览器 —— 桌面版就没窗口了。配套 pack/rth_pythonnet.py。）
+for _pkg in ('pythonnet', 'clr_loader'):
+    try:
+        _b, _d, _h = collect_all(_pkg)
+        binaries += _b
+        datas += _d
+        hiddenimports += _h
+    except Exception:
+        pass
+
 # ---- 视频解析插件（video_parser_core）依赖链 ----
 # 这些包光靠 import 分析收不全：yt_dlp 的 extractor 是动态 import；curl_cffi /
 # msgspec / lxml / PIL 带 .pyd 二进制；bilibili_api 子模块多；gallery_dl 要能
@@ -64,7 +79,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[os.path.join(SPECPATH, 'rth_pythonnet.py')],
     excludes=['test'],
     noarchive=False,
     optimize=0,
