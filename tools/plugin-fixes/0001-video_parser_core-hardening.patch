@@ -1,0 +1,174 @@
+From 373de529be25b0d80dea76e16e0eecd669c8503e Mon Sep 17 00:00:00 2001
+From: astercore <dev@astercore.local>
+Date: Thu, 8 Oct 2026 02:45:13 +0000
+Subject: [PATCH] =?UTF-8?q?fix(video=5Fparser=5Fcore):=20=E7=BC=BA?=
+ =?UTF-8?q?=E4=BE=9D=E8=B5=96=E4=B8=8D=E5=86=8D=E6=8B=96=E5=9E=AE=E6=95=B4?=
+ =?UTF-8?q?=E5=8C=85=20+=20cookie=20=E8=90=BD=E7=9B=98=E5=A4=B1=E8=B4=A5?=
+ =?UTF-8?q?=E4=B8=8D=E5=86=8D=E4=B8=AD=E6=96=AD=E6=B3=A8=E5=86=8C?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+两个高优缺陷，Windows 上必现，而且现象都是"静默半死"（真机/审计都抓到过）：
+
+1) `parsers/__init__.py` 原来 19 行**无条件** import 各平台 → 任一平台依赖缺失就整包
+   ImportError，现场表现是"发链接毫无反应、只留一行 error"。改成逐个容错 import：
+   失败的记进 `FAILED_IMPORTS` 并跳过，其余平台照常注册（平台是靠
+   `BaseParser.get_all_subclass()` 发现的，降级不破坏契约）；`main.py` 启动时
+   显式打印未加载的平台，不再静默。
+
+2) `cookie.py::save_to_file()` 的 `cj.save()` 没有异常保护，而它会被 13 个解析器的
+   `__init__` 间接调用 → Windows 上"文件被占用 / OneDrive 同步 / 目录只读"抛 OSError 时，
+   `_register_parser` 中断、**该平台之后的所有平台永不注册**（静默到重启）。改成只告警：
+   内存里的 cookie 仍然有效，下次 save 会自动重试。
+
+验证（真代码 + 真依赖，Linux 上跑）：
+- 正常：18 个平台全部注册，FAILED_IMPORTS 为空
+- 模拟缺 xhs 依赖：xhs 进 FAILED_IMPORTS，其余 17 个照常可用（改前是整包 ImportError）
+- 模拟 `cj.save` 抛 OSError：只告警不抛；注册循环仍遍历 17 个平台
+---
+ video_parser_core/cookie.py           | 13 ++++-
+ video_parser_core/main.py             |  5 +-
+ video_parser_core/parsers/__init__.py | 83 ++++++++++++++-------------
+ 3 files changed, 60 insertions(+), 41 deletions(-)
+
+diff --git a/video_parser_core/cookie.py b/video_parser_core/cookie.py
+index 7f4b106..c3085de 100644
+--- a/video_parser_core/cookie.py
++++ b/video_parser_core/cookie.py
+@@ -301,7 +301,18 @@ class CookieJar:
+                 )
+             )
+ 
+-        cj.save(ignore_discard=True, ignore_expires=True)
++        # Windows 上"文件被占用 / OneDrive 同步中 / 目录只读"都会让这里抛 OSError。
++        # 而本方法会被 13 个解析器的 __init__ 间接调用：一旦异常抛出去，_register_parser
++        # 就中断 —— **该平台之后的所有平台永不注册**，静默到重启（真机踩过）。
++        # 所以：只告警、不抛；内存里的 cookie 仍然有效，下次 save 会再试。
++        try:
++            cj.save(ignore_discard=True, ignore_expires=True)
++        except Exception as e:                       # noqa: BLE001
++            logger.warning(
++                f"保存 cookie 失败（内存中的 cookie 仍然有效，稍后会自动重试）："
++                f"{self.cookie_file} — {type(e).__name__}: {e}"
++            )
++            return
+         logger.debug(f"已保存 {len(cj)} 个 Cookie 到 {self.cookie_file}")
+ 
+     def load_from_file(self) -> None:
+diff --git a/video_parser_core/main.py b/video_parser_core/main.py
+index 13a130b..723958d 100644
+--- a/video_parser_core/main.py
++++ b/video_parser_core/main.py
+@@ -21,7 +21,7 @@ from .config import PluginConfig
+ from .debounce import Debouncer
+ from .exception import ParseFallbackError
+ from .download import Downloader
+-from .parsers import BaseParser
++from .parsers import FAILED_IMPORTS, BaseParser
+ from .render import Renderer
+ from .sender import MessageSender, _setup_sender, segs_to_cq
+ from .utils import extract_json_url
+@@ -86,6 +86,9 @@ class ParserPlugin:
+         patterns.sort(key=lambda x: -len(x[0]))
+         self.key_pattern_list = patterns
+         print(f"[解析器] 已启用平台: {'、'.join(enabled_names)}")
++        # 某个平台 import 失败不再拖垮整包，但**不能静默**：这里明确报出来
++        for _mod, _err in sorted(FAILED_IMPORTS.items()):
++            print(f"[解析器] 平台 {_mod} 未能加载（已跳过，其它平台不受影响）: {_err}")
+ 
+     # ---------- 解析入口 ----------
+     async def _parse_and_send(self, event: dict, text: str):
+diff --git a/video_parser_core/parsers/__init__.py b/video_parser_core/parsers/__init__.py
+index 8f99e90..922364d 100644
+--- a/video_parser_core/parsers/__init__.py
++++ b/video_parser_core/parsers/__init__.py
+@@ -1,41 +1,46 @@
+-from .acfun import AcfunParser
++"""各平台解析器：**逐个容错 import**。
++
++为什么不能老老实实一行一个 `from .xhs import XHSParser`：Windows 上"某个平台的依赖
++装漏/没有轮子/被安全软件拦"是常态，而这里任何一个 import 失败都会让**整包** ImportError
++—— 现象是"发链接毫无反应、日志里只留一行 error"，极难排查。
++
++改法：逐个 import，失败的记进 `FAILED_IMPORTS` 并跳过，其余平台照常可用，启动时打印。
++消费方（`main.py`）只需要 `BaseParser`：平台是靠 `BaseParser.get_all_subclass()` 自动
++发现的 —— 只要模块 import 过、类就注册上了，所以"降级"不会破坏契约。
++"""
++
+ from .base import BaseParser
+-from .bilibili import BilibiliParser
+-from .douyin import DouyinParser
+-from .instagram import InstagramParser
+-from .iwara import IwaraParser
+-from .kuaishou import KuaiShouParser
+-from .ncm import NCMParser
+-from .nga import NGAParser
+-from .qzone import QZoneParser
+-from .shipinhao import ShipinhaoParser
+-from .tiktok import TikTokParser
+-from .twitter import TwitterParser
+-from .weibo import WeiBoParser
+-from .xhs import XHSParser
+-from .xiaoheihe import XiaoheiheParser
+-from .youtube import YouTubeParser
+-from .zhihu import ZhihuParser
+-from .pixiv import PixivParser
+ 
+-__all__ = [
+-    "BaseParser",
+-    "AcfunParser",
+-    "BilibiliParser",
+-    "DouyinParser",
+-    "InstagramParser",
+-    "KuaiShouParser",
+-    "NCMParser",
+-    "NGAParser",
+-    "QZoneParser",
+-    "TikTokParser",
+-    "TwitterParser",
+-    "WeiBoParser",
+-    "XiaoheiheParser",
+-    "XHSParser",
+-    "YouTubeParser",
+-    "ZhihuParser",
+-    "IwaraParser",
+-    "ShipinhaoParser",
+-    "PixivParser",
+-]
++# 模块名 → 类名（原来的 19 行 import 就是这些）
++_PLATFORMS: tuple[tuple[str, str], ...] = (
++    ("acfun", "AcfunParser"),
++    ("bilibili", "BilibiliParser"),
++    ("douyin", "DouyinParser"),
++    ("instagram", "InstagramParser"),
++    ("iwara", "IwaraParser"),
++    ("kuaishou", "KuaiShouParser"),
++    ("ncm", "NCMParser"),
++    ("nga", "NGAParser"),
++    ("qzone", "QZoneParser"),
++    ("shipinhao", "ShipinhaoParser"),
++    ("tiktok", "TikTokParser"),
++    ("twitter", "TwitterParser"),
++    ("weibo", "WeiBoParser"),
++    ("xhs", "XHSParser"),
++    ("xiaoheihe", "XiaoheiheParser"),
++    ("youtube", "YouTubeParser"),
++    ("zhihu", "ZhihuParser"),
++    ("pixiv", "PixivParser"),
++)
++
++#: {平台模块名: 失败原因}，正常时为空；`main.py` 启动时会打印出来
++FAILED_IMPORTS: dict[str, str] = {}
++
++for _mod, _cls in _PLATFORMS:
++    try:
++        _m = __import__(f"{__name__}.{_mod}", fromlist=[_cls])
++        globals()[_cls] = getattr(_m, _cls)          # 保持原有名字可用（向后兼容）
++    except Exception as _e:                           # noqa: BLE001 — 缺一个平台不该拖垮全部
++        FAILED_IMPORTS[_mod] = f"{type(_e).__name__}: {_e}"
++
++__all__ = ["BaseParser"] + [c for _, c in _PLATFORMS if c in globals()]
+-- 
+2.43.0
+
