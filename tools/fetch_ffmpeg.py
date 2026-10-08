@@ -22,6 +22,24 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+
+def _force_utf8_stdio() -> None:
+    """把本进程 stdout/stderr 转成 UTF-8 + errors=replace。
+
+    必须做：CI 的 Windows runner 控制台是 **cp1252**，本脚本会打印中文 →
+    第一次 print 就 UnicodeEncodeError 把构建打死（2026-10-08 真实踩过，
+    v0.3.0 第一次 CI 就挂在这一步）。项目里 `bootstrap.force_utf8_stdio()`
+    对插件做的是同一件事。
+    """
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")   # type: ignore[attr-defined]
+        except Exception:                                        # noqa: BLE001
+            pass
+
+
+_force_utf8_stdio()
+
 MIRRORS = [
     ("gyan.dev · release-essentials（稳定版）",
      "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"),
