@@ -111,7 +111,9 @@ class WebPanel:
         # 单独模块，避免把引导塞进两端必须字节一致的共享面板资产
         try:
             from .guide import add_guide_routes
-            add_guide_routes(app, state=getattr(self, "app_state", None))
+            add_guide_routes(app, state=getattr(self, "app_state", None),
+                             manager=getattr(self, "manager", None),
+                             loop_provider=getattr(self, "_loop_provider", None))
         except Exception:                       # noqa: BLE001 引导坏了不能拖垮面板
             log.exception("连接引导路由注册失败")
 
@@ -294,7 +296,9 @@ class ManagerWebPanel:
         # 单独模块，避免把引导塞进两端必须字节一致的共享面板资产
         try:
             from .guide import add_guide_routes
-            add_guide_routes(app, state=getattr(self, "app_state", None))
+            add_guide_routes(app, state=getattr(self, "app_state", None),
+                             manager=getattr(self, "manager", None),
+                             loop_provider=getattr(self, "_loop_provider", None))
         except Exception:                       # noqa: BLE001 引导坏了不能拖垮面板
             log.exception("连接引导路由注册失败")
 

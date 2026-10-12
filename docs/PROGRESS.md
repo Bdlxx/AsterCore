@@ -73,6 +73,7 @@
 | Windows CI 工作流 | 🔶 已写好待推（需 workflow scope token） |
 | zip 分发 + 更新器（校验/替换/保 data/自动回滚） | ✅ 内核（update.py） |
 | NapCat 可选组件引导 | ✅ 2026-10-08 `/guide` 页 + `components.py`（探测/下载/写配置/托管）；内置协议同层 |
+| 引导页一键建账号 / 账号级连接方式 | ✅ 2026-10-12 `/api/guide/account*`（建账号同时对齐组件配置；`backend_name` 可按账号混用，运行中自动重启） |
 
 ### 内置协议（Phase 4 · ⬜）
 

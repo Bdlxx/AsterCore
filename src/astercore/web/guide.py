@@ -38,6 +38,8 @@ def _err(msg: str, code: int = 400):
 
 def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
                      state: Any | None = None,
+                     manager: Any | None = None,
+                     loop_provider: Callable[[], Any] | None = None,
                      mode_provider: Callable[[], str] | None = None,
                      mode_setter: Callable[[str, bool], tuple[bool, str]] | None = None,
                      ) -> None:
@@ -160,6 +162,165 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
         threading.Thread(target=_run, daemon=True, name=f"guide-install-{comp.key}").start()
         return _ok({"started": True, "job": job})
 
+    # ---------------- 账号：一键建账号 + 账号级连接方式 ----------------
+    _BACKENDS = [
+        {"key": "onebot", "label": "NapCat（外部客户端，OneBot v11）",
+         "desc": "推荐：走官方登录通道，风控最低。需要组件 + 本机 QQ。"},
+        {"key": "lagrange", "label": "内置协议直登（实验）",
+         "desc": "免装客户端，内核自托管 Lagrange.OneBot。非官方协议，建议小号。"},
+        {"key": "null", "label": "演示模式（不连协议）",
+         "desc": "只跑内核与插件，用于开发/演示。"},
+    ]
+
+    def _component_for_backend(name: str) -> str | None:
+        """后端名 → 组件 key（内置协议要自己拉进程；napcat 走外部客户端但仍需组件配置）"""
+        return {"lagrange": "lagrange", "onebot": "napcat"}.get(name)
+
+    def _run_on_loop(coro):
+        """面板主循环在跑就投过去；否则（测试/无循环）当前线程直接跑"""
+        import asyncio
+        loop = None
+        if loop_provider is not None:
+            try:
+                loop = loop_provider()
+            except Exception:                       # noqa: BLE001
+                loop = None
+        if loop is not None and getattr(loop, "is_running", lambda: False)():
+            return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=120)
+        return asyncio.run(coro)
+
+    def _start_account(aid: str) -> tuple[bool, str]:
+        try:
+            _run_on_loop(manager.start(aid))
+            return True, ""
+        except Exception as e:                      # noqa: BLE001 起不来要如实回给界面
+            log.warning("账号 %s 启动失败: %s", aid, e)
+            return False, f"{type(e).__name__}: {e}"
+
+    def _restart_account(aid: str) -> tuple[bool, str]:
+        try:
+            _run_on_loop(manager.restart(aid))
+            return True, ""
+        except Exception as e:                      # noqa: BLE001
+            log.warning("账号 %s 重启失败: %s", aid, e)
+            return False, f"{type(e).__name__}: {e}"
+
+    @app.get("/api/guide/accounts")
+    def guide_accounts():
+        if manager is None:
+            return _err("当前面板没有账号管理器", 501)
+        base = get_base()
+        out = []
+        for row in manager.scan():
+            aid = str(row.get("account_id"))
+            cfg = manager.get_config(aid)
+            comp_key = _component_for_backend(getattr(cfg, "backend_name", "") or "")
+            comp = C.COMPONENTS.get(comp_key) if comp_key else None
+            out.append({
+                "account_id": aid,
+                "display_name": row.get("display_name") or aid,
+                "backend_name": getattr(cfg, "backend_name", "") or "onebot",
+                "ws_url": getattr(cfg, "ws_url", ""),
+                "http_url": getattr(cfg, "http_url", ""),
+                "running": bool(row.get("running")),
+                "component": comp_key,
+                "component_installed": C.is_installed(comp, base) if comp else None,
+            })
+        return _ok({"accounts": out, "backends": _BACKENDS})
+
+    @app.post("/api/guide/account")
+    def guide_create_account():
+        """一键建账号：写组件配置（端口/token 自动、与账号一致）→ 写 backend.json → 启动"""
+        if manager is None:
+            return _err("当前面板没有账号管理器", 501)
+        b = _body()
+        aid = str(b.get("account_id") or "").strip()
+        if not aid:
+            return _err("缺 account_id（QQ 号）")
+        backend_name = str(b.get("backend_name") or "").strip()
+        comp_key = str(b.get("key") or "").strip()
+        if not backend_name:
+            backend_name = {"lagrange": "lagrange", "napcat": "onebot",
+                            "null": "null"}.get(comp_key, "onebot")
+        if backend_name not in {x["key"] for x in _BACKENDS}:
+            return _err(f"未知连接方式: {backend_name}")
+
+        base = get_base()
+        ws_url, http_url, token = "", "", ""
+        comp_key = comp_key or _component_for_backend(backend_name)
+        if comp_key and b.get("write_config", True):
+            comp = C.COMPONENTS.get(comp_key)
+            if comp is None:
+                return _err(f"未知组件: {comp_key}")
+            if not C.is_installed(comp, base):
+                return _err(f"组件还没装：请先在第②步『下载并安装』{comp.label}", 409)
+            cfg_data = _write_config(comp, {"qq": aid, "ws_port": b.get("ws_port"),
+                                            "http_port": b.get("http_port"),
+                                            "token": b.get("token")})
+            ws_url, http_url = cfg_data["ws_url"], cfg_data["http_url"]
+            token = cfg_data["access_token"]
+
+        from ..core.manager import AccountConfig
+        old = manager.get_config(aid)
+        cfg = AccountConfig(
+            account_id=aid,
+            display_name=str(b.get("display_name") or (old.display_name if old else aid)),
+            backend_name=backend_name,
+            ws_url=ws_url or (old.ws_url if old else "ws://127.0.0.1:3001"),
+            http_url=http_url or (old.http_url if old else "http://127.0.0.1:3000"),
+            access_token=token or (old.access_token if old else ""),
+        )
+        manager.save_config(cfg)
+
+        started, start_err = False, ""
+        if b.get("start", True):
+            started, start_err = _start_account(aid)
+
+        # 全局运行方式跟着走，避免"账号是内置协议、模式还写着 napcat"
+        if state is not None and backend_name in ("lagrange", "null"):
+            try:
+                state.set_backend(backend_name, ack_risk=True)
+            except Exception:                       # noqa: BLE001
+                pass
+        return _ok({"account_id": aid, "backend_name": backend_name,
+                    "ws_url": cfg.ws_url, "http_url": cfg.http_url,
+                    "started": started, "start_error": start_err})
+
+    @app.post("/api/guide/account/<aid>/backend")
+    def guide_set_account_backend(aid: str):
+        """账号级连接方式：改 backend.json；必要时补组件配置；在跑就重启"""
+        if manager is None:
+            return _err("当前面板没有账号管理器", 501)
+        cfg = manager.get_config(aid)
+        if cfg is None:
+            return _err(f"账号不存在: {aid}", 404)
+        b = _body()
+        name = str(b.get("backend_name") or "").strip() or {
+            "lagrange": "lagrange", "napcat": "onebot", "null": "null",
+        }.get(str(b.get("key") or "").strip(), "")
+        if name not in {x["key"] for x in _BACKENDS}:
+            return _err(f"未知连接方式: {name or '(空)'}")
+
+        base = get_base()
+        comp_key = _component_for_backend(name)
+        if comp_key and b.get("write_config", True):
+            comp = C.COMPONENTS.get(comp_key)
+            if not C.is_installed(comp, base):
+                return _err(f"组件还没装：请先『下载并安装』{comp.label}", 409)
+            data = _write_config(comp, {"qq": aid})     # 端口/token 自动，且与账号一致
+            cfg.ws_url, cfg.http_url = data["ws_url"], data["http_url"]
+            cfg.access_token = data["access_token"]
+
+        cfg.backend_name = name
+        manager.save_config(cfg)
+        running = any(str(r.get("account_id")) == aid and r.get("running")
+                      for r in manager.scan())
+        restarted, err = (False, "")
+        if running and b.get("restart", True):
+            restarted, err = _restart_account(aid)
+        return _ok({"account_id": aid, "backend_name": name, "ws_url": cfg.ws_url,
+                    "http_url": cfg.http_url, "restarted": restarted, "error": err})
+
     # ---------------- 写配置 ----------------
     def _write_config(comp, b: dict[str, Any]) -> dict[str, Any]:
         """写配置（config 路由与 host 路由共用）：端口/token 不给就自动生成"""
@@ -263,7 +424,7 @@ GUIDE_HTML = """<!doctype html>
  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
  button{background:#2b6cff;color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px}
  button.ghost{background:#2a2f3a} button:disabled{opacity:.5;cursor:not-allowed}
- input{background:#0f1115;color:#e6e6e6;border:1px solid #2f3644;border-radius:8px;padding:7px 10px;width:150px}
+ input,select{background:#0f1115;color:#e6e6e6;border:1px solid #2f3644;border-radius:8px;padding:7px 10px;width:150px}
  code,pre{background:#0b0d12;border:1px solid #232936;border-radius:8px;padding:8px;display:block;
    white-space:pre-wrap;word-break:break-all;color:#b9c6d8;font-size:12px}
  .ok{color:#4ade80} .bad{color:#f87171} .warn{color:#fbbf24} .muted{color:#8b95a5}
@@ -320,8 +481,73 @@ GUIDE_HTML = """<!doctype html>
   <pre id="testOut" class="muted">—</pre>
 </div>
 
+<div class="card">
+  <b>⑥ 账号（连接方式可逐个账号单独设）</b>
+  <div class="row" style="margin-top:8px">
+    <input id="newQq" placeholder="QQ 号（账号ID）">
+    <input id="newName" placeholder="显示名（可空）">
+    <select id="newBackend"></select>
+    <button onclick="createAccount()">一键建好并启动</button>
+    <span id="acctMsg" class="muted"></span>
+  </div>
+  <table id="acctTable" style="margin-top:10px">
+    <tr><th>账号</th><th>连接方式</th><th>状态</th><th>操作</th></tr>
+  </table>
+  <div class="muted" style="margin-top:6px">改连接方式会把组件配置（端口/token）对齐到该账号；
+    账号正在运行时会自动重启。NapCat 需要组件已安装且本机已装 QQ。</div>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
+
+let BACKENDS = [];
+async function loadAccounts() {
+  const j = await api('/api/guide/accounts');
+  if (!j.ok) { $('acctTable').innerHTML = '<tr><td class="bad">' + esc(j.error) + '</td></tr>'; return; }
+  BACKENDS = j.data.backends || [];
+  const sel = $('newBackend');
+  if (sel && !sel.options.length) sel.innerHTML = BACKENDS.map(b => `<option value="${b.key}">${esc(b.label)}</option>`).join('');
+  const rows = ['<tr><th>账号</th><th>连接方式</th><th>状态</th><th>操作</th></tr>'];
+  for (const a of (j.data.accounts || [])) {
+    const opts = BACKENDS.map(b => `<option value="${b.key}" ${b.key === a.backend_name ? 'selected' : ''}>${esc(b.label)}</option>`).join('');
+    const warn = (a.component && a.component_installed === false) ? ' <span class="warn">组件未装</span>' : '';
+    rows.push(`<tr>
+      <td>${esc(a.display_name)}<div class="muted">${esc(a.account_id)}${warn}</div></td>
+      <td><select onchange="setBackend('${a.account_id}', this.value)">${opts}</select></td>
+      <td>${a.running ? '<span class="ok">运行中</span>' : '<span class="muted">已停止</span>'}
+          <div class="muted">${esc(a.ws_url || '')}</div></td>
+      <td><button class="ghost" onclick="acctAct('${a.account_id}','start')">启动</button>
+          <button class="ghost" onclick="acctAct('${a.account_id}','stop')">停止</button></td></tr>`);
+  }
+  $('acctTable').innerHTML = rows.join('');
+}
+async function createAccount() {
+  const j = await api('/api/guide/account', {
+    account_id: $('newQq').value.trim(),
+    display_name: $('newName').value.trim(),
+    backend_name: $('newBackend').value});
+  if (!j.ok) { $('acctMsg').innerHTML = '<span class="bad">' + esc(j.error) + '</span>'; loadAccounts(); return; }
+  $('acctMsg').innerHTML = `<span class="ok">已建 ${esc(j.data.account_id)}（${esc(j.data.backend_name)}）`
+    + (j.data.started ? ' 并已启动' : '')
+    + (j.data.start_error ? ` <span class="warn">启动告警：${esc(j.data.start_error)}</span>` : '')
+    + '</span>';
+  loadAccounts(); refresh();
+}
+async function setBackend(aid, name) {
+  const j = await api(`/api/guide/account/${aid}/backend`, {backend_name: name});
+  $('acctMsg').innerHTML = j.ok
+    ? `<span class="ok">${esc(aid)} → ${esc(name)}${j.data.restarted ? '（已重启）' : ''}</span>`
+      + (j.data.error ? ` <span class="warn">${esc(j.data.error)}</span>` : '')
+    : '<span class="bad">' + esc(j.error) + '</span>';
+  loadAccounts();
+}
+async function acctAct(aid, act) {
+  const j = await api(`/api/accounts/${aid}/${act}`, {});
+  $('acctMsg').innerHTML = j.ok ? `<span class="ok">${esc(aid)} ${act} 完成</span>`
+                                : '<span class="bad">' + esc(j.error || '失败') + '</span>';
+  loadAccounts();
+}
+
 async function api(path, body, method) {
   const r = await fetch(path, {method: method || (body ? 'POST' : 'GET'),
     headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
@@ -407,7 +633,7 @@ async function discover() {
   const j = await api('/api/guide/discover', {});
   $('testOut').textContent = j.ok ? JSON.stringify(j.data.found, null, 2) : ('失败：' + j.error);
 }
-refresh(); showMode();
+refresh(); showMode(); loadAccounts();
 setInterval(refresh, 3000);
 </script></body></html>
 """

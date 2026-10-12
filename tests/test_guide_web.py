@@ -277,3 +277,150 @@ class GuideModeTest(unittest.TestCase):
         self.assertFalse(c.get("/api/guide/mode").get_json()["data"]["can_set"])
         r = c.post("/api/guide/mode", json={"mode": "napcat"})
         self.assertEqual(r.status_code, 501, "没有 state 时如实说'不支持'，而不是假装成功")
+
+
+# --------------------------------------------------------------------------- #
+# 一键建账号 + 账号级「连接方式」选择器
+# --------------------------------------------------------------------------- #
+class GuideAccountTest(unittest.TestCase):
+    """用假 manager 验行为：建账号要同时把组件配置对齐、切连接方式要能重启"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from flask import Flask
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.base = Path(cls._tmp.name)
+        # 假装 lagrange 组件已装（一键建账号会检查它）
+        d = cls.base / "components" / "lagrange"
+        d.mkdir(parents=True)
+        (d / "Lagrange.OneBot.exe").write_bytes(b"MZ")
+
+        class FakeManager:
+            def __init__(self):
+                from astercore.core.manager import AccountConfig
+                self.AccountConfig = AccountConfig
+                self.cfgs = {}
+                self.actions = []
+                self.running = set()
+
+            def scan(self):
+                return [{"account_id": aid, "display_name": cfg.display_name,
+                         "running": aid in self.running} for aid, cfg in self.cfgs.items()]
+
+            def get_config(self, aid):
+                return self.cfgs.get(str(aid))
+
+            def save_config(self, cfg):
+                self.cfgs[cfg.account_id] = cfg
+                return Path("/tmp") / cfg.account_id / "backend.json"
+
+            async def start(self, aid):
+                self.actions.append(("start", str(aid)))
+                self.running.add(str(aid))
+
+            async def restart(self, aid):
+                self.actions.append(("restart", str(aid)))
+                self.running.add(str(aid))
+
+        from astercore.web.guide import add_guide_routes
+        cls.mgr = FakeManager()
+        app = Flask("guide-account")
+        add_guide_routes(app, base_dir=lambda: cls.base, manager=cls.mgr)
+        cls.client = app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_no_manager_is_501(self):
+        from flask import Flask
+        from astercore.web.guide import add_guide_routes
+        app = Flask("no-mgr")
+        add_guide_routes(app, base_dir=lambda: self.base)
+        c = app.test_client()
+        self.assertEqual(c.get("/api/guide/accounts").status_code, 501)
+        self.assertEqual(c.post("/api/guide/account", json={"account_id": "1"}).status_code, 501)
+
+    def test_backends_listed(self):
+        j = self.client.get("/api/guide/accounts").get_json()
+        self.assertTrue(j["ok"])
+        keys = {b["key"] for b in j["data"]["backends"]}
+        self.assertEqual(keys, {"onebot", "lagrange", "null"})
+
+    def test_one_click_create_lagrange_account(self):
+        """一键建账号：组件配置（端口/token）必须和账号里写的一致"""
+        r = self.client.post("/api/guide/account", json={
+            "account_id": "2551736206", "display_name": "羽笙", "key": "lagrange"})
+        j = r.get_json()
+        self.assertTrue(j["ok"], j)
+        self.assertEqual(j["data"]["backend_name"], "lagrange")
+        self.assertTrue(j["data"]["started"])
+        cfg = self.mgr.get_config("2551736206")
+        self.assertEqual(cfg.display_name, "羽笙")
+        self.assertEqual(cfg.backend_name, "lagrange")
+        ws_port = cfg.ws_url.rsplit(":", 1)[1]
+        app_cfg = json.loads((self.base / "components/lagrange/appsettings.json")
+                             .read_text(encoding="utf-8"))
+        fw = [i for i in app_cfg["Implementations"] if i["Type"] == "ForwardWebSocket"][0]
+        self.assertEqual(str(fw["Port"]), ws_port, "组件端口与账号 ws_url 必须一致")
+        self.assertEqual(fw["AccessToken"], cfg.access_token, "token 也必须一致")
+        self.assertIn(("start", "2551736206"), self.mgr.actions)
+
+    def test_create_null_account_without_config(self):
+        j = self.client.post("/api/guide/account", json={
+            "account_id": "demo1", "backend_name": "null"}).get_json()
+        self.assertTrue(j["ok"], j)
+        self.assertEqual(self.mgr.get_config("demo1").backend_name, "null")
+
+    def test_create_without_component_is_409(self):
+        r = self.client.post("/api/guide/account", json={
+            "account_id": "123456789", "key": "napcat"})     # napcat 组件没装
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("下载并安装", r.get_json()["error"])
+
+    def test_missing_account_id(self):
+        self.assertEqual(self.client.post("/api/guide/account", json={}).status_code, 400)
+
+    def test_set_account_backend_switches_and_restarts(self):
+        self.client.post("/api/guide/account", json={"account_id": "777", "backend_name": "null"})
+        self.mgr.running.add("777")
+        self.mgr.actions.clear()
+        j = self.client.post("/api/guide/account/777/backend",
+                             json={"backend_name": "lagrange"}).get_json()
+        self.assertTrue(j["ok"], j)
+        self.assertEqual(self.mgr.get_config("777").backend_name, "lagrange")
+        self.assertTrue(j["data"]["restarted"], "在跑的账号切方式后应当重启")
+        self.assertIn(("restart", "777"), self.mgr.actions)
+        ws = self.mgr.get_config("777").ws_url
+        self.assertTrue(ws.startswith("ws://127.0.0.1:"), ws)
+
+    def test_set_backend_on_stopped_account_does_not_restart(self):
+        self.client.post("/api/guide/account", json={"account_id": "888", "backend_name": "null"})
+        self.mgr.running.discard("888")
+        self.mgr.actions.clear()
+        j = self.client.post("/api/guide/account/888/backend",
+                             json={"backend_name": "null"}).get_json()
+        self.assertTrue(j["ok"], j)
+        self.assertFalse(j["data"]["restarted"])
+        self.assertEqual(self.mgr.actions, [])
+
+    def test_set_backend_unknown_account_404(self):
+        self.assertEqual(self.client.post("/api/guide/account/nope/backend",
+                                          json={"backend_name": "null"}).status_code, 404)
+
+    def test_set_backend_unknown_name_400(self):
+        self.client.post("/api/guide/account", json={"account_id": "999", "backend_name": "null"})
+        r = self.client.post("/api/guide/account/999/backend", json={"backend_name": "nope"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_accounts_list_shape(self):
+        j = self.client.get("/api/guide/accounts").get_json()
+        rows = j["data"]["accounts"]
+        self.assertIsInstance(rows, list)
+        if rows:
+            a = rows[0]
+            for k in ("account_id", "display_name", "backend_name", "running", "component"):
+                self.assertIn(k, a)
