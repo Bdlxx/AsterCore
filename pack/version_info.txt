@@ -1,0 +1,38 @@
+# PyInstaller 版本资源（VSVersionInfo）
+#
+# 为什么要有它：SmartScreen/UAC 会显示"发布者：未知"，写上公司名/产品名/版本后
+# 至少是完整元数据（有些杀软启发式也会因此少报）。**它不能替代代码签名** ——
+# 要彻底消掉 SmartScreen 需要买代码签名证书，这里只做能做的部分。
+# 版本号与 astercore.__version__ 的一致性由 tests/test_packaging.py 钉住。
+VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=(0, 4, 1, 0),
+        prodvers=(0, 4, 1, 0),
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
+        subtype=0x0,
+        date=(0, 0),
+    ),
+    kids=[
+        StringFileInfo(
+            [
+                StringTable(
+                    "080404B0",
+                    [
+                        StringStruct("CompanyName", "栖星 AsterCore"),
+                        StringStruct("FileDescription", "栖星 AsterCore · QQ 机器人框架（Windows 桌面版）"),
+                        StringStruct("FileVersion", "0.4.1.0"),
+                        StringStruct("InternalName", "astercore"),
+                        StringStruct("LegalCopyright", "Copyright (C) 2026 栖星 AsterCore"),
+                        StringStruct("OriginalFilename", "astercore.exe"),
+                        StringStruct("ProductName", "栖星 AsterCore"),
+                        StringStruct("ProductVersion", "0.4.1"),
+                    ],
+                )
+            ]
+        ),
+        VarFileInfo([VarStruct("Translation", [0x0804, 1200])]),
+    ],
+)

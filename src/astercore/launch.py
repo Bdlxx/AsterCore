@@ -123,13 +123,18 @@ async def amain(args: argparse.Namespace) -> int:
     if seeded:
         print(f"  已播种示例插件: {', '.join(seeded)}")
 
-    # 向导决策（--yes 跳过）
+    # 向导决策：窗口模式（无控制台）不问 cmd —— 运行方式挪到界面（面板 → 连接引导）
     if args.yes:
         if state.needs_wizard():
             state.set_backend(DEFAULT_MODE, ack_risk=True)
         print(f"[launch] 运行方式: {state.backend_mode}（--yes 跳过向导）")
     elif state.needs_wizard():
-        _console_wizard(state)
+        if _interactive_stdin():
+            _console_wizard(state)
+        else:
+            state.set_backend(DEFAULT_MODE, ack_risk=True)
+            print(f"[launch] 无交互终端（窗口模式）→ 先取推荐运行方式 {DEFAULT_MODE}；"
+                  f"要改请在面板『连接引导』页里选（不再在 cmd 里问）")
     else:
         print(f"[launch] 运行方式: {state.backend_mode}（跳过向导，重置请在面板操作）")
 
@@ -413,6 +418,15 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str) -> int:
     finally:
         await mgr.stop_all()
     return 0
+
+
+def _interactive_stdin() -> bool:
+    """有没有能问问题的终端：windowed 模式没有控制台，input() 会直接 EOF/崩"""
+    import sys
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:                       # noqa: BLE001
+        return False
 
 
 def _entry_url(http_url: str, state) -> str:

@@ -96,7 +96,11 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    # windowed：不弹黑色控制台窗口。代价是 stdout/stderr 为 None →
+    # 由 bootstrap.ensure_stdio_for_windowed() 在最早期接到 <base>/console.log。
+    console=False,
+    # 版本资源：至少别显示"未知发布者"（彻底消 SmartScreen 需代码签名证书）
+    version=os.path.join(BASE, 'pack', 'version_info.txt'),
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

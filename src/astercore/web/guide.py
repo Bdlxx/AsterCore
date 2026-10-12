@@ -37,11 +37,31 @@ def _err(msg: str, code: int = 400):
 
 
 def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
-                     mode_provider: Callable[[], str] | None = None) -> None:
-    """把引导页面与接口挂到面板 app 上（两端都调用；Linux 上同样可用）"""
+                     state: Any | None = None,
+                     mode_provider: Callable[[], str] | None = None,
+                     mode_setter: Callable[[str, bool], tuple[bool, str]] | None = None,
+                     ) -> None:
+    """把引导页面与接口挂到面板 app 上（两端都调用；Linux 上同样可用）
+
+    state: core.app.AppState —— 有它就能在**界面里**选运行方式/勾风险确认
+    （windowed 模式没有控制台，控制台向导走不了，这一步必须在界面完成）。
+    """
     from ..paths import app_base_dir
 
     get_base = base_dir or app_base_dir
+
+    # 运行方式：优先用 state（面板默认传），其次用显式给的 provider/setter
+    _get_mode = mode_provider or (lambda: getattr(state, "backend_mode", "") if state else "")
+    _set_mode = mode_setter
+    if _set_mode is None and state is not None:
+        _set_mode = lambda mode, ack: state.set_backend(mode, ack_risk=ack)  # noqa: E731
+
+    def _modes_meta() -> list[dict[str, Any]]:
+        try:
+            from ..app import BACKEND_MODES
+            return [{"key": k, **v} for k, v in BACKEND_MODES.items()]
+        except Exception:                       # noqa: BLE001 元数据拿不到不影响其它功能
+            return []
 
     def _body() -> dict[str, Any]:
         from flask import request
@@ -60,13 +80,36 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
         return Response(GUIDE_HTML, mimetype="text/html; charset=utf-8")
 
     # ---------------- 状态 / 发现 ----------------
+    @app.get("/api/guide/mode")
+    def guide_mode():
+        """运行方式（界面里选；windowed 无控制台，这一步必须在界面完成）"""
+        return _ok({
+            "mode": _get_mode(),
+            "modes": _modes_meta(),
+            "can_set": _set_mode is not None,
+        })
+
+    @app.post("/api/guide/mode")
+    def guide_set_mode():
+        b = _body()
+        mode = str(b.get("mode") or "").strip()
+        ack = bool(b.get("ack_risk"))
+        if not mode:
+            return _err("缺 mode")
+        if _set_mode is None:
+            return _err("当前环境不支持在界面里切换运行方式", 501)
+        ok, msg = _set_mode(mode, ack)
+        if not ok:
+            return _err(msg, 400)
+        return _ok({"mode": _get_mode(), "msg": msg})
+
     @app.get("/api/guide/status")
     def guide_status():
         base = get_base()
         return _ok({
             "supported": True,
             "base_dir": str(base),
-            "mode": (mode_provider() if mode_provider else None),
+            "mode": _get_mode(),
             "components": {k: C.host_status(c, base) for k, c in C.COMPONENTS.items()},
             "jobs": dict(_JOBS),
         })
@@ -231,11 +274,9 @@ GUIDE_HTML = """<!doctype html>
 
 <div class="card">
   <b>① 运行方式</b>
-  <div class="row" style="margin-top:6px">
-    <button class="ghost" onclick="showMode()">查看说明</button>
-    <span class="muted">A. NapCat 稳定模式（推荐，走官方通道）＆nbsp;B. 内置协议直登（实验，免装客户端，非官方协议有封号风险，建议小号）</span>
-  </div>
-  <div id="modeBox" class="muted" style="margin-top:8px"></div>
+  <div class="muted" style="margin:6px 0">两种都随时可改（改完重启账号生效）。这一步以前是控制台向导在问，
+    现在挪到界面里 —— 窗口模式本来就没有控制台可问。</div>
+  <div id="modeBox" class="muted">加载中…</div>
 </div>
 
 <div class="card">
@@ -304,8 +345,32 @@ async function refresh() {
   $('jobBox').textContent = jobs.length ? jobs.map(([k, j]) =>
     `${k}: ${j.step} ${j.total ? '(' + Math.round(j.got / j.total * 100) + '%)' : ''} ${j.msg || ''}`).join('\\n') : '';
 }
-function showMode() {
-  $('modeBox').innerHTML = '当前模式由首启向导/设置决定；选「内置协议直登」时会弹<b>风险确认</b>（非官方协议，建议小号）。';
+async function showMode() {
+  const j = await api('/api/guide/mode');
+  if (!j.ok) { $('modeBox').innerHTML = '<span class="bad">' + esc(j.error) + '</span>'; return; }
+  const d = j.data;
+  const rows = (d.modes || []).map(m => `
+    <label style="display:block;margin:6px 0;cursor:pointer">
+      <input type="radio" name="mode" value="${m.key}" ${m.key === d.mode ? 'checked' : ''} style="width:auto">
+      <b>${esc(m.label)}</b> <span class="muted">风险 ${m.risk}/5${m.needs_ack ? ' · 需确认风险' : ''}</span>
+      <div class="muted" style="margin-left:22px">${esc(m.desc)}</div>
+    </label>`).join('');
+  $('modeBox').innerHTML = rows + `
+    <div class="row" style="margin-top:8px">
+      <label class="muted"><input type="checkbox" id="ack" style="width:auto"> 我已知晓风险（选「内置协议直登」必须勾）</label>
+      <button onclick="saveMode()">保存运行方式</button>
+      <span id="modeMsg" class="muted"></span>
+    </div>`;
+}
+async function saveMode() {
+  const sel = document.querySelector('input[name=mode]:checked');
+  if (!sel) return;
+  const j = await api('/api/guide/mode',
+    {mode: sel.value, ack_risk: ($('ack') && $('ack').checked) || false});
+  $('modeMsg').innerHTML = j.ok
+    ? '<span class="ok">已保存：' + esc(j.data.mode) + '</span>'
+    : '<span class="bad">' + esc(j.error) + '</span>';
+  refresh();
 }
 async function install(key) {
   const j = await api('/api/guide/install', {key});

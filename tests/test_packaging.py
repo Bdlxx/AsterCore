@@ -122,6 +122,28 @@ class ParserDependencyTest(unittest.TestCase):
         self.assertIn("dist/astercore/astercore.exe.config", wf,
                       "config 必须拷到 dist/astercore/（exe 同级），否则 .NET 不认")
 
+    def test_version_info_matches_and_spec_is_windowed(self):
+        """exe 版本资源要与 __version__ 一致；spec 必须是 **windowed**。
+
+        用户明确要求"启动时不应唤起 cmd"：console=True 会弹黑色控制台窗口。
+        代价是 stdout/stderr 为 None → 入口必须最早期调用
+        `bootstrap.ensure_stdio_for_windowed()`，否则第一条 print 就崩。
+        """
+        from astercore import __version__
+
+        vi = (ROOT / "pack" / "version_info.txt").read_text(encoding="utf-8")
+        self.assertIn(f'"{__version__}"', vi,
+                      "version_info.txt 的 ProductVersion 与 astercore.__version__ 不一致")
+        self.assertIn("CompanyName", vi, "要写发布者信息（少报『未知发布者』）")
+
+        spec = (ROOT / "pack" / "astercore.spec").read_text(encoding="utf-8")
+        self.assertIn("console=False", spec, "必须是 windowed：不该弹控制台")
+        self.assertIn("version_info.txt", spec, "exe 要带版本资源")
+
+        main = (ROOT / "src" / "astercore" / "__main__.py").read_text(encoding="utf-8")
+        self.assertIn("ensure_stdio_for_windowed", main,
+                      "windowed 下 stdout 兜底必须在入口最早期调用")
+
     def test_runtime_hook_is_valid_python(self):
         """hook 在 exe 启动最早期执行，语法/名字错了就是"整个程序起不来"。"""
         import ast

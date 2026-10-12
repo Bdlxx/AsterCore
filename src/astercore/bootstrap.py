@@ -91,6 +91,51 @@ FFMPEG_HINT = (
     "② 安装后加入 PATH；③ 在环境变量 FFMPEG_PATH 里写完整路径。")
 
 
+def ensure_stdio_for_windowed():
+    """windowed（spec 里 console=False）下 `sys.stdout`/`sys.stderr` 是 **None**：
+    任何一条 print 都会 AttributeError 把程序打死，而且用户看不到原因。
+
+    这里把它们接到 `<base>/console.log`，并把 fd 1/2 也 dup 过去（子进程输出一起落盘），
+    再退化也给个哑对象 —— 只求"能起来 + 有地方看日志"。
+    返回日志路径；本来就是控制台模式则返回 None。
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return None
+    path = None
+    try:
+        from .paths import app_base_dir
+        base = app_base_dir()
+        base.mkdir(parents=True, exist_ok=True)
+        path = base / "console.log"
+        stream = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
+    except Exception:                            # noqa: BLE001 兜底不能自己抛
+        path = None
+
+        class _Null:
+            def write(self, *_a):
+                return 0
+
+            def flush(self):
+                pass
+
+            def isatty(self):
+                return False
+
+            def fileno(self):
+                raise OSError
+        stream = _Null()
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+    try:
+        os.dup2(stream.fileno(), 1)
+        os.dup2(stream.fileno(), 2)
+    except (OSError, AttributeError, ValueError):
+        pass
+    return str(path) if path else ""
+
+
 def find_ffmpeg(base_dir: Path) -> str | None:
     """定位 ffmpeg，并把所在目录插到 PATH 最前面。
 

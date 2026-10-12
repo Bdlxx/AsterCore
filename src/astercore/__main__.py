@@ -6,6 +6,14 @@
 
 from __future__ import annotations
 
+# windowed（spec console=False）下没有控制台 → stdout/stderr 为 None，
+# 任何 print 都会炸。**必须在最早期接上**（第一条 print 之前）。
+try:
+    from astercore.bootstrap import ensure_stdio_for_windowed
+    _CONSOLE_LOG = ensure_stdio_for_windowed()
+except Exception:                                # noqa: BLE001 兜底本身不能拖垮启动
+    _CONSOLE_LOG = None
+
 import argparse
 import asyncio
 import logging

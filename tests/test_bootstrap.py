@@ -163,6 +163,34 @@ class LegacyEnvTest(unittest.TestCase):
                 if old_ff is not None:
                     os.environ["FFMPEG_PATH"] = old_ff
 
+    def test_ensure_stdio_for_windowed_installs_stream(self):
+        """windowed：stdout/stderr 是 None，兜底必须装上可写对象且不抛。
+
+        这是"启动不弹 cmd"的前提：console=False 后 sys.stdout 就是 None，
+        不兜底的话 launch 的第一条 print 直接 AttributeError。
+        """
+        from astercore import bootstrap
+        old_out, old_err = sys.stdout, sys.stderr
+        try:
+            with tempfile.TemporaryDirectory() as td, \
+                    mock.patch("astercore.paths.app_base_dir", lambda: Path(td)), \
+                    mock.patch("os.dup2", lambda *a, **k: None):
+                sys.stdout = None
+                sys.stderr = None
+                path = bootstrap.ensure_stdio_for_windowed()
+                self.assertEqual(Path(path), Path(td) / "console.log")
+                print("窗口模式：这条 print 不该炸")          # 真写进日志文件
+                sys.stderr.write("stderr 也要能写\n")
+                self.assertTrue((Path(td) / "console.log").is_file())
+                self.assertGreater((Path(td) / "console.log").stat().st_size, 0)
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
+
+    def test_ensure_stdio_noop_with_console(self):
+        """本来就有控制台（stdout 可用）→ 不接管，返回 None"""
+        from astercore import bootstrap
+        self.assertIsNone(bootstrap.ensure_stdio_for_windowed())
+
     def test_find_ffmpeg_none_when_missing(self):
         from astercore.bootstrap import find_ffmpeg
         with tempfile.TemporaryDirectory() as td:

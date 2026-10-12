@@ -201,3 +201,79 @@ class GuideHostTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- #
+# 运行方式改为「界面里选」（windowed 没有控制台可问）—— 追加在文件末尾，
+# unittest discover 照样会收集（`if __name__` 只在直接执行时生效）
+# --------------------------------------------------------------------------- #
+class GuideModeTest(unittest.TestCase):
+    """运行方式：GET 列元数据 / POST 保存（实验后端必须勾风险）"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from flask import Flask
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+
+        class FakeState:
+            def __init__(self):
+                self.backend_mode = ""
+                self.ack = None
+
+            def needs_wizard(self):
+                return True
+
+            def set_backend(self, mode, ack_risk=False):
+                from astercore.app import BACKEND_MODES
+                if mode not in BACKEND_MODES:
+                    return False, f"未知运行方式: {mode}"
+                if BACKEND_MODES[mode]["needs_ack"] and not ack_risk:
+                    return False, "该模式为实验性质，需确认已知晓账号风险"
+                self.backend_mode, self.ack = mode, ack_risk
+                return True, "已保存"
+
+        from astercore.web.guide import add_guide_routes
+        cls.state = FakeState()
+        app = Flask("guide-mode")
+        add_guide_routes(app, base_dir=lambda: Path(cls._tmp.name), state=cls.state)
+        cls.client = app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_mode_listed_with_risk_metadata(self):
+        j = self.client.get("/api/guide/mode").get_json()
+        self.assertTrue(j["ok"], j)
+        keys = {m["key"] for m in j["data"]["modes"]}
+        self.assertEqual(keys, {"napcat", "lagrange", "null"})
+        lag = [m for m in j["data"]["modes"] if m["key"] == "lagrange"][0]
+        self.assertTrue(lag["needs_ack"], "实验后端必须带风险确认要求")
+        self.assertTrue(j["data"]["can_set"], "传了 state 就应该能在界面里改")
+
+    def test_set_mode_requires_ack_then_saves(self):
+        r = self.client.post("/api/guide/mode", json={"mode": "lagrange"})
+        self.assertEqual(r.status_code, 400, "没勾风险就不该放行")
+        r2 = self.client.post("/api/guide/mode", json={"mode": "lagrange", "ack_risk": True})
+        self.assertTrue(r2.get_json()["ok"], r2.get_json())
+        self.assertEqual(self.state.backend_mode, "lagrange")
+        self.assertTrue(self.state.ack)
+        self.assertEqual(self.client.get("/api/guide/mode").get_json()["data"]["mode"],
+                         "lagrange")
+
+    def test_unknown_mode_rejected(self):
+        r = self.client.post("/api/guide/mode", json={"mode": "not-a-mode", "ack_risk": True})
+        self.assertEqual(r.status_code, 400)
+
+    def test_without_state_cannot_set(self):
+        from flask import Flask
+        from astercore.web.guide import add_guide_routes
+        app = Flask("no-state")
+        add_guide_routes(app, base_dir=lambda: Path(self._tmp.name))
+        c = app.test_client()
+        self.assertFalse(c.get("/api/guide/mode").get_json()["data"]["can_set"])
+        r = c.post("/api/guide/mode", json={"mode": "napcat"})
+        self.assertEqual(r.status_code, 501, "没有 state 时如实说'不支持'，而不是假装成功")
