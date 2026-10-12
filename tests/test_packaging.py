@@ -100,6 +100,28 @@ class ParserDependencyTest(unittest.TestCase):
         self.assertIn("add_dll_directory", hook, "hook 必须把包内目录加进 DLL 搜索路径")
         self.assertIn("Zone.Identifier", hook, "hook 要清 MOTW（浏览器下载的 zip 解压后会带）")
 
+    def test_ships_exe_config_with_load_from_remote_sources(self):
+        """`astercore.exe.config` 必须随包放在 exe 同级，且开着 loadFromRemoteSources。
+
+        真机 v0.3.0 逐层排查的结论：内嵌窗口起不来（静默回退浏览器）的真根因是
+        .NET 把包内程序集判为"网络位置"→ Assembly.LoadFrom 抛 0x80131515 →
+        clr_loader 的原生 shim 把异常吞掉，只留一句 "Failed to resolve
+        Python.Runtime.Loader.Initialize"。开这个开关就正常了。
+        PyInstaller 的 datas 只会进 _internal，而 .NET 只认 <exe 名>.config，所以必须由
+        CI 单独拷到 dist/astercore/ —— 这条测试就是把"两边都别漏"钉住。
+        """
+        cfg = ROOT / "pack" / "astercore.exe.config"
+        self.assertTrue(cfg.is_file(), "缺 pack/astercore.exe.config")
+        text = cfg.read_text(encoding="utf-8")
+        self.assertIn("loadFromRemoteSources", text, "config 里必须开 loadFromRemoteSources")
+        self.assertRegex(text, r'loadFromRemoteSources\s+enabled="true"',
+                         "loadFromRemoteSources 必须 enabled=true")
+
+        wf = (ROOT / ".github" / "workflows" / "windows-build.yml").read_text(encoding="utf-8")
+        self.assertIn("pack/astercore.exe.config", wf, "CI 没把 config 拷进包")
+        self.assertIn("dist/astercore/astercore.exe.config", wf,
+                      "config 必须拷到 dist/astercore/（exe 同级），否则 .NET 不认")
+
     def test_runtime_hook_is_valid_python(self):
         """hook 在 exe 启动最早期执行，语法/名字错了就是"整个程序起不来"。"""
         import ast
