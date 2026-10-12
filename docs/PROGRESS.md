@@ -72,7 +72,7 @@
 | PyInstaller spec（pack/astercore.spec） | ✅（Linux 33MB onedir 验证可运行） |
 | Windows CI 工作流 | 🔶 已写好待推（需 workflow scope token） |
 | zip 分发 + 更新器（校验/替换/保 data/自动回滚） | ✅ 内核（update.py） |
-| NapCat 可选组件引导 | ⬜ |
+| NapCat 可选组件引导 | ✅ 2026-10-08 `/guide` 页 + `components.py`（探测/下载/写配置/托管）；内置协议同层 |
 
 ### 内置协议（Phase 4 · ⬜）
 

@@ -273,6 +273,6 @@ class OneBotV11Backend(Backend):
             self._loop.call_soon_threadsafe(fut.set_result, payload)
 
 
-# lagrange（内置协议直登）复用 OneBot v11 协议：协议一致，仅运行方式/托管不同
-# （进程托管见 core.process_mgr；此处只注册别名，连接参数同 OneBot）
-register_backend(OneBotV11Backend, name="lagrange")
+# lagrange（内置协议直登）复用 OneBot v11 协议：协议一致，仅运行方式/托管不同。
+# 真正的实现是 backends/lagrange.py（自托管 Lagrange.OneBot 子进程）；
+# 这里**不再**注册别名 —— 别名会把 lagrange 指回本类，托管就丢了。

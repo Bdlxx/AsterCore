@@ -73,6 +73,11 @@ class AccountRuntime:
             except Exception:
                 log.exception("插件 %s 激活失败（保持加载但不注入能力）", lp.meta.name)
         self.bus.set_plugins(plugins)
+        try:
+            await self.backend.prepare()      # 内置协议：连接前先把组件准备好并拉起
+        except Exception as e:                # noqa: BLE001 明确报错，别让账号"半死"
+            log.error("后端准备失败（%s）: %s", self.backend.name, e)
+            raise
         await self.backend.start()
         log.info("账号 %s 启动完成（后端 %s，插件 %d）",
                  self.account_id, self.backend.name, len(plugins))

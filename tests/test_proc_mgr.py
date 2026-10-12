@@ -51,13 +51,23 @@ class ProcessManagerTest(unittest.TestCase):
 
 class BackendAliasTest(unittest.TestCase):
     def test_lagrange_alias(self):
+        """lagrange 现在是**自带托管的子类**（不再是 OneBot 的别名）。
+
+        2026-10-08 起：内置协议直登要自己拉起 Lagrange.OneBot 子进程、写 appsettings.json，
+        所以 backends/lagrange.py 里的 LagrangeBackend 注册了同名后端；
+        协议侧仍复用 OneBot v11（父类），差别只在托管。
+        """
         from astercore.backends.onebot import OneBotV11Backend  # noqa: F401
+        from astercore.backends.lagrange import LagrangeBackend  # noqa: F401
         from astercore.core.backend import BackendConfig, get_registry
         reg = get_registry()
         self.assertIn("lagrange", reg.names())
         self.assertIn("onebot", reg.names())
         b = reg.create("lagrange", BackendConfig())
-        self.assertEqual(b.name, "onebot")  # 复用实现
+        self.assertIsInstance(b, LagrangeBackend)
+        self.assertIsInstance(b, OneBotV11Backend)   # 协议一致：仍是 OneBot 实现
+        self.assertEqual(b.name, "lagrange")
+        self.assertTrue(hasattr(b, "prepare"), "要能在连接前把组件拉起来")
 
 
 if __name__ == "__main__":

@@ -52,6 +52,13 @@ class Backend(ABC):
         }
 
     # ---- 生命周期 ----
+    async def prepare(self) -> None:
+        """连接前的准备（默认无操作）。
+
+        内置协议直登（lagrange）在这里配置并拉起自己的子进程；引导页也复用组件层。
+        抛异常会被账号运行时记录并显示在面板（只影响这个账号）。
+        """
+
     @abstractmethod
     async def start(self) -> None:
         """建立连接并开始接收事件（实现方负责重连）"""

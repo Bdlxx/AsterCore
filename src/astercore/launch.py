@@ -134,8 +134,9 @@ async def amain(args: argparse.Namespace) -> int:
         print(f"[launch] 运行方式: {state.backend_mode}（跳过向导，重置请在面板操作）")
 
     # 账号 + 后端
-    import astercore.backends.null    # noqa: F401
-    import astercore.backends.onebot  # noqa: F401
+    import astercore.backends.null      # noqa: F401
+    import astercore.backends.onebot    # noqa: F401
+    import astercore.backends.lagrange  # noqa: F401  内置协议直登（自托管子进程）
     mgr = AccountManager(accounts_dir, plugin_dir=plugins_dir, data_root=data_root)
     started, failed = [], []
     for a in mgr.scan():
@@ -229,7 +230,8 @@ async def amain(args: argparse.Namespace) -> int:
     import os as _os
     if not args.no_browser and not _os.environ.get("ASTER_NO_OPEN"):
         import threading
-        threading.Timer(0.8, _open_browser, args=(http_url,)).start()
+        threading.Timer(0.8, _open_browser, args=(_entry_url(http_url, state),)).start()
+    print(f"[launch] 连接引导页: {http_url}/guide（装组件/写配置/扫码都在那一页走完）")
 
     # 规范 §5.3：HTTP 模式下关掉浏览器标签 ≠ 退出程序，托盘常驻。
     # 托盘「退出」通过线程安全的 event 唤醒主循环。
@@ -411,6 +413,24 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str) -> int:
     finally:
         await mgr.stop_all()
     return 0
+
+
+def _entry_url(http_url: str, state) -> str:
+    """首启入口：当前运行方式对应的组件还没装时，直接把用户带到连接引导页
+
+    计划书 §3.1 的主路径是"引导下载 → 自动写配置 → 扫码 → 自动连接"，
+    所以第一次打开面板应该落在引导页，而不是让人自己找。
+    """
+    try:
+        from astercore import components as C
+        from astercore.paths import app_base_dir
+        key = {"napcat": "napcat", "lagrange": "lagrange"}.get(
+            getattr(state, "backend_mode", "") or "")
+        if key and not C.is_installed(C.get_component(key), app_base_dir()):
+            return http_url.rstrip("/") + "/guide"
+    except Exception:                       # noqa: BLE001 引导入口不能拖垮启动
+        pass
+    return http_url
 
 
 def _open_browser(url: str) -> None:

@@ -107,6 +107,14 @@ class WebPanel:
         def shared_panel_css():
             return send_from_directory(self.static_dir, "panel.css")
 
+        # 连接引导（计划书 §3.1）：组件下载/写配置/托管 + 独立页面 /guide
+        # 单独模块，避免把引导塞进两端必须字节一致的共享面板资产
+        try:
+            from .guide import add_guide_routes
+            add_guide_routes(app)
+        except Exception:                       # noqa: BLE001 引导坏了不能拖垮面板
+            log.exception("连接引导路由注册失败")
+
         @app.get("/api/info")
         def api_info():
             return _ok(_info_payload(self._rt()))
@@ -282,6 +290,14 @@ class ManagerWebPanel:
             return send_from_directory(self.static_dir, "panel.css")
 
         # ---------- 账号 ----------
+        # 连接引导（计划书 §3.1）：组件下载/写配置/托管 + 独立页面 /guide
+        # 单独模块，避免把引导塞进两端必须字节一致的共享面板资产
+        try:
+            from .guide import add_guide_routes
+            add_guide_routes(app)
+        except Exception:                       # noqa: BLE001 引导坏了不能拖垮面板
+            log.exception("连接引导路由注册失败")
+
         @app.get("/api/info")
         def api_info():
             rt = None
