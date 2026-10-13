@@ -117,6 +117,13 @@ class WebPanel:
         except Exception:                       # noqa: BLE001 引导坏了不能拖垮面板
             log.exception("连接引导路由注册失败")
 
+        # 首启引导页 /setup 与设置页 /settings（规格 §三；桌面专属页面，不碰共用资产）
+        try:
+            from .setup import add_setup_routes
+            add_setup_routes(app, getattr(self, "app_state", None), getattr(self, "auth", None))
+        except Exception:                       # noqa: BLE001
+            log.exception("首启引导/设置路由注册失败")
+
         @app.get("/api/info")
         def api_info():
             return _ok(_info_payload(self._rt()))
@@ -302,6 +309,13 @@ class ManagerWebPanel:
                              loop_provider=getattr(self, "_loop_provider", None))
         except Exception:                       # noqa: BLE001 引导坏了不能拖垮面板
             log.exception("连接引导路由注册失败")
+
+        # 首启引导页 /setup 与设置页 /settings（规格 §三；桌面专属页面，不碰共用资产）
+        try:
+            from .setup import add_setup_routes
+            add_setup_routes(app, getattr(self, "app_state", None), getattr(self, "auth", None))
+        except Exception:                       # noqa: BLE001
+            log.exception("首启引导/设置路由注册失败")
 
         @app.get("/api/info")
         def api_info():

@@ -450,10 +450,18 @@ def _entry_url(http_url: str, state) -> str:
     try:
         from astercore import components as C
         from astercore.paths import app_base_dir
+        base = http_url.rstrip("/")
+        # ① 未完成首启引导 → 只显示引导页（规格 §三）
+        if getattr(state, "needs_wizard", lambda: False)():
+            return base + "/setup"
+        # ② "稍后选择"：不催装组件，直接进主界面
+        if str(state.data.get("setup_mode") or "") == "later":
+            return http_url
+        # ③ 已完成引导但组件还没装 → 落到连接引导页
         key = {"napcat": "napcat", "lagrange": "lagrange"}.get(
             getattr(state, "backend_mode", "") or "")
         if key and not C.is_installed(C.get_component(key), app_base_dir()):
-            return http_url.rstrip("/") + "/guide"
+            return base + "/guide"
     except Exception:                       # noqa: BLE001 引导入口不能拖垮启动
         pass
     return http_url
