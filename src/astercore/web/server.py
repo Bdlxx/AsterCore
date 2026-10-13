@@ -124,6 +124,15 @@ class WebPanel:
         except Exception:                       # noqa: BLE001
             log.exception("首启引导/设置路由注册失败")
 
+        # 桌面端"机器人状态/账号浮层"（共用面板顶栏靠能力探测决定是否渲染；
+        # Linux 端没有这个模块 → 404 → 面板自动隐藏顶栏）
+        try:
+            from .appapi import add_app_routes
+            add_app_routes(app, getattr(self, "bot_controller", None),
+                           getattr(self, "app_state", None))
+        except Exception:                       # noqa: BLE001
+            log.exception("桌面状态接口注册失败")
+
         @app.get("/api/info")
         def api_info():
             return _ok(_info_payload(self._rt()))
@@ -316,6 +325,15 @@ class ManagerWebPanel:
             add_setup_routes(app, getattr(self, "app_state", None), getattr(self, "auth", None))
         except Exception:                       # noqa: BLE001
             log.exception("首启引导/设置路由注册失败")
+
+        # 桌面端"机器人状态/账号浮层"（共用面板顶栏靠能力探测决定是否渲染；
+        # Linux 端没有这个模块 → 404 → 面板自动隐藏顶栏）
+        try:
+            from .appapi import add_app_routes
+            add_app_routes(app, getattr(self, "bot_controller", None),
+                           getattr(self, "app_state", None))
+        except Exception:                       # noqa: BLE001
+            log.exception("桌面状态接口注册失败")
 
         @app.get("/api/info")
         def api_info():

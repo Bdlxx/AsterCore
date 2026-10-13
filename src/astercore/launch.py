@@ -417,6 +417,7 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
         "transport": "jsapi",
     })
 
+    hub.register("app.quit", lambda _p=None: (holder.get("shell").quit() if holder.get("shell") else None) or {"ok": True})
     shell = ShellApp(controller=controller, url=http_url, hub=hub, html_path=html,
                      on_quit=None, title=f"栖星 AsterCore v{__version__}",
                      debug=bool(getattr(args, "debug", False)))

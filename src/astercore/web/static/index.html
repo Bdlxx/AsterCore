@@ -412,5 +412,16 @@ PANEL.endpoints.page = function (p) {
 
 PANEL.start();
 </script>
+<!-- 桌面端顶栏 + 账号浮层（能力探测：Linux 端无 /api/app/* 时自动隐藏，见 panel.js） -->
+<div id="desktopBar" style="display:none">
+  <button id="dbAvatar" class="db-avatar" title="账号列表">·</button>
+  <div class="db-info"><div id="dbNick" class="db-nick">—</div><div id="dbState" class="db-state">—</div></div>
+  <button id="dbToggle" class="db-btn">启动机器人</button>
+  <button id="dbRestart" class="db-btn ghost">重启机器人</button>
+  <button id="dbExit" class="db-btn ghost">退出</button>
+</div>
+<div id="acctOverlay" style="display:none">
+  <div class="acct-panel"><div class="acct-title">账号</div><div class="acct-list"></div></div>
+</div>
 </body>
 </html>
