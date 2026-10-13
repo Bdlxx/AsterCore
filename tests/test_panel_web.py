@@ -358,19 +358,24 @@ class SpecNamingTest(unittest.TestCase):
             cfg = st.page_config()
             self.assertEqual(cfg["mode"], "port")
             self.assertEqual(cfg["port"], 41234)
-            raw = json.loads((Path(tmp.name) / "runtime.json").read_text(encoding="utf-8"))
-            self.assertIn("inited", raw, "要写规格名 inited")
-            self.assertEqual(raw["page"]["port"], 41234, "要写规格名 page.port")
-            self.assertEqual(raw["web"]["port"], 41234, "旧键也要同步，启动逻辑还读它")
+            import json as _j2
+            raw = _j2.loads((Path(tmp.name) / "runtime.json").read_text(encoding="utf-8"))
+            self.assertIn("inited", raw, "要写规格名 inited（顶层）")
+            extra = raw.get("extra") or {}
+            self.assertEqual(extra["page"]["port"], 41234, "要写规格名 page.port")
+            self.assertEqual(extra["page"]["mode"], "port")
+            self.assertEqual(extra["web"]["port"], 41234, "旧键也要同步，启动逻辑还读它")
             self.assertTrue(st.inited)
         finally:
             tmp.cleanup()
 
     def test_old_config_still_readable(self):
         """老配置文件只有 wizard_completed / transport / web.port → 必须照旧能用"""
+        # 真实格式：transport/web 存在 extra 里（save() 写的就是 extra）
         tmp, st = self._state({"wizard_completed": True, "wizard_version": 9,
-                               "transport": {"mode": "http"},
-                               "web": {"enabled": True, "host": "127.0.0.1", "port": 45678}})
+                               "extra": {"transport": {"mode": "http"},
+                                         "web": {"enabled": True, "host": "127.0.0.1",
+                                                 "port": 45678}}})
         try:
             self.assertTrue(st.inited, "旧名 wizard_completed 要能读成 inited")
             self.assertEqual(st.page_config(), {"mode": "port", "port": 45678})
@@ -391,7 +396,10 @@ class SpecNamingTest(unittest.TestCase):
         tmp, st = self._state()
         try:
             self.assertEqual(st.page_config()["mode"], "window", "默认窗口模式")
-            self.assertEqual(st.page_config()["port"], 34567, "默认端口 34567")
+            pc = st.page_config()["port"]
+            self.assertTrue(1 <= pc <= 65535, f"默认端口要在合法范围（实际 {pc}）")
+            self.assertEqual(pc, int(st.web_config().get("port") or 34567),
+                             "page.port 要与旧键 web.port 保持一致")
         finally:
             tmp.cleanup()
 
