@@ -330,3 +330,36 @@ def _accounts_with_guide(ctx):
 PAGES['accounts'] = (_accounts_with_guide, PAGES['accounts'][1], PAGES['accounts'][2])
 PAGES['guide-page'] = (_guide_page, '连接引导', [])
 
+
+# ---------------------------------------------------------------- 关于与更新（计划书 §369）
+def _about_page(ctx):
+    from astercore import __version__
+    upd = ctx.get('update') or {}
+    state = upd.get('state') or 'idle'
+    ver = upd.get('version') or ''
+    msg = upd.get('message') or '点「检查更新」看看有没有新版本'
+    return card('🔄 关于与更新', f"""
+      <div class="cf-form">
+        <div class="cf-field"><label class="cf-label">当前版本</label>
+          <div><b>栖星 AsterCore v{__version__}</b>
+            <span class="el-tag {'success' if state == 'done' else 'info'}">{esc(msg)}</span>
+          </div>
+          <div class="cf-help">更新流程：检查 → 下载 → <b>sha256 校验</b> → 暂存 → 重启替换；
+            新版本起不来会自动回滚到旧版本。</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          <button class="btn" data-act="up-check">检查更新</button>
+          <button class="btn" data-act="up-start">下载并校验</button>
+          <button class="btn" data-act="up-apply" {'disabled' if state != 'done' else ''}>重启以应用更新</button>
+          <button class="btn btn-default" data-act="up-refresh">刷新状态</button>
+        </div>
+        <div id="upBox" style="font-size:12px;color:var(--text-secondary);margin-top:10px">
+          版本 {esc(ver or '—')} ｜ 状态 {esc(state)}
+        </div>
+        <div id="upBar" style="height:6px;background:var(--bg-secondary,#eee);border-radius:3px;margin-top:8px;overflow:hidden">
+          <div id="upBarFill" style="height:100%;width:{int(upd.get('percent') or 0)}%;background:#2b6cff"></div>
+        </div>
+      </div>""")
+
+
+PAGES['about-page'] = (_about_page, '关于与更新', [])
+
