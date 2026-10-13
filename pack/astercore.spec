@@ -100,8 +100,7 @@ a = Analysis(
 pyz = PYZ(a.pure)
 
 exe = EXE(
-    icon=_ICON if os.path.isfile(_ICON) else None,
-    pyz,
+        pyz,
     a.scripts,
     [],
     exclude_binaries=True,
@@ -120,6 +119,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=_ICON if os.path.isfile(_ICON) else None,
 )
 coll = COLLECT(
     exe,
