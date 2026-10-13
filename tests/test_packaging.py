@@ -161,3 +161,34 @@ def _raw_dist_specs() -> set[str]:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AppIconTest(unittest.TestCase):
+    """应用图标（栖星）：exe 图标、随包、托盘可用、面板 favicon —— 缺哪个都算回归"""
+
+    def setUp(self):
+        self.root = Path(__file__).resolve().parent.parent
+
+    def test_ico_shipped(self):
+        ico = self.root / "pack" / "astercore.ico"
+        self.assertTrue(ico.is_file(), "pack/astercore.ico 必须存在（exe 图标用）")
+        self.assertGreater(ico.stat().st_size, 10_000)
+        self.assertEqual(ico.read_bytes()[:4], b"\x00\x00\x01\x00", "必须是合法 .ico（有 ICONDIR 头）")
+
+    def test_spec_sets_icon_and_bundles_it(self):
+        spec = (self.root / "pack" / "astercore.spec").read_text(encoding="utf-8")
+        self.assertIn("_ICON", spec)
+        self.assertIn("icon=_ICON", spec, "EXE 要带图标")
+        self.assertIn("datas.append((_ICON", spec, "图标也要随包（托盘运行时读）")
+
+    def test_tray_uses_bundled_icon_with_fallback(self):
+        sh = (self.root / "src" / "astercore" / "shell.py").read_text(encoding="utf-8")
+        self.assertIn("astercore.ico", sh, "托盘要优先用随包图标")
+        self.assertIn("_MEIPASS", sh)
+        self.assertIn("改用内置画法", sh, "拿不到图标必须退回内置画法，不能让托盘罢工")
+
+    def test_panel_has_favicon(self):
+        html = (self.root / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('rel="icon"', html)
+        self.assertTrue((self.root / "src" / "astercore" / "web" / "static" / "favicon.ico").is_file())
+

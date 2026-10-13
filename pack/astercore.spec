@@ -79,6 +79,11 @@ _comp = os.path.join(BASE, 'pack', 'components', 'lagrange')
 if sys.platform == 'win32' and os.path.isdir(_comp):
     datas.append((_comp, 'components/lagrange'))
 
+# 应用图标（栖星）：exe 图标 + 随包一份给托盘运行时读
+_ICON = os.path.join(SPECPATH, 'astercore.ico')
+if os.path.isfile(_ICON):
+    datas.append((_ICON, '.'))
+
 a = Analysis(
     [os.path.join(BASE, 'src/astercore/__main__.py')],
     pathex=[os.path.join(BASE, 'src')],
@@ -95,6 +100,7 @@ a = Analysis(
 pyz = PYZ(a.pure)
 
 exe = EXE(
+    icon=_ICON if os.path.isfile(_ICON) else None,
     pyz,
     a.scripts,
     [],

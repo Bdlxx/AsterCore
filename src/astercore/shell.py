@@ -14,6 +14,7 @@
 #   3. 打包时不写 hiddenimports 会报 "No webview platform" —— 见 pack/astercore.spec
 
 from __future__ import annotations
+import sys
 
 import logging
 import threading
@@ -174,6 +175,25 @@ class ShellApp:
 
     # ---------- 托盘 ----------
     def _make_icon_image(self):
+        """托盘图标：优先用随包的「栖星」图标；拿不到再退回内置画法。
+
+        为什么要退回：托盘不能用"图标缺失"当借口罢工，用户会陷入"关不掉又找不到图标"。
+        """
+        try:
+            from pathlib import Path as _Path
+
+            from PIL import Image as _Image
+            cands = []
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                cands.append(_Path(meipass) / "astercore.ico")
+            cands.append(_Path(__file__).resolve().parents[2] / "pack" / "astercore.ico")
+            for c in cands:
+                if c.is_file():
+                    with _Image.open(str(c)) as im:
+                        return im.convert("RGBA").resize((64, 64))
+        except Exception as e:                     # noqa: BLE001 图标问题不能影响托盘可用性
+            log.debug("加载应用图标失败，改用内置画法：%s", e)
         from PIL import Image, ImageDraw
         img = Image.new("RGB", (64, 64), (20, 24, 32))
         d = ImageDraw.Draw(img)
