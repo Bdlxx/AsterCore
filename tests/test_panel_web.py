@@ -682,3 +682,33 @@ class AccountFixedPathRpcTest(unittest.TestCase):
     def test_dialog_closes_after_save(self):
         self.assertGreaterEqual(self.index.count("acctDlg') ;") + self.index.count("getElementById('acctDlg')"), 2)
 
+
+class WindowChromeTest(unittest.TestCase):
+    """无边框窗口 + 自绘三按钮（左最小化 / 中收起托盘 / 右退出程序）"""
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.index = (root / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+        self.launch = (root / "src" / "astercore" / "launch.py").read_text(encoding="utf-8")
+        self.shell = (root / "src" / "astercore" / "shell.py").read_text(encoding="utf-8")
+        self.css = (root / "src" / "astercore" / "web" / "static" / "panel.css").read_text(encoding="utf-8")
+
+    def test_frameless(self):
+        self.assertIn("frameless=True", self.shell)
+
+    def test_buttons_drive_actions(self):
+        """按钮必须靠 data-act 走面板的全局委托 —— 只写 id 不挂 data-act 就是死按钮"""
+        for bid, act in (("dbWinMin", "win-min"), ("dbWinHide", "win-hide"), ("dbWinQuit", "win-quit")):
+            self.assertIn(f'id="{bid}"', self.index)
+            self.assertIn(f'data-act="{act}"', self.index, f"{bid} 必须挂 data-act={act}")
+            self.assertIn(f"'{act}':", self.index, f"{act} 处理器要在")
+
+    def test_rpc_registered(self):
+        self.assertIn('_reg_rpc(hub, "/api/app/window"', self.launch)
+        for action in ("minimize", "hide", "quit"):
+            self.assertIn(f'action == "{action}"', self.launch)
+
+    def test_drag_region(self):
+        self.assertIn("-webkit-app-region:drag", self.css, "无边框窗口必须有拖动区")
+        self.assertIn("no-drag", self.css, "按钮要排除拖动，否则点不动")
+
