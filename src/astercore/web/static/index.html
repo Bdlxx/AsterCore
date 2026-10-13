@@ -364,6 +364,14 @@ PANEL.hooks = {
   },
   groupSelect: function () { return { groups: PANEL.hooks.groupCache || [], error: PANEL.hooks.groupErr || '' }; },
   actions: {
+    'rt-pick': function (el) {
+      /* 单选按钮：把选中的值同步给隐藏输入（保存仍走 collectForm('rt') 的 data-rt 约定） */
+      const v = el.getAttribute('value') || '';
+      const hid = document.getElementById('rt_mode');
+      if (hid) { hid.value = v; }
+      const lbl = el.parentNode ? (el.parentNode.textContent || '').trim().split('\n')[0] : v;
+      return { ok: true, message: '已选择：' + (lbl || v) + '（点右下角「保存」生效）' };
+    },
     'up-refresh': async function () {
       const r = await post('/api/app/update/status', {});
       const d = (r && r.ok && r.data) ? r.data : {};

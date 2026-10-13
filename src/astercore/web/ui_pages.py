@@ -151,30 +151,43 @@ def _accounts(ctx):
 
 # ---------------------------------------------------------------- 运行方式 / 安全设置
 def _settings_runtime(ctx):
+    """运行方式：**单选**选择后端模式；右侧按大类分成多张卡片（用户要求）。"""
     st = (ctx.get('runtime') or {}).get('state') or {}
     modes = (ctx.get('runtime') or {}).get('modes') or {}
-    opts = ''.join(
-        f'<option value="{esc(k)}"{" selected" if k == st.get("backend_mode") else ""}>'
-        f'{esc(v.get("label") or k)}</option>' for k, v in modes.items())
-    desc = ''.join(
-        f'<div class="cf-help" style="margin:2px 0"><b>{esc(v.get("label") or k)}</b>：{esc(v.get("desc") or "")}'
-        + (f'（风险：{esc(v.get("risk"))}）' if v.get('risk') else '') + '</div>' for k, v in modes.items())
-    return card('🛠️ 运行方式', f"""
-      <div class="cf-form">
-        <div class="cf-field"><label class="cf-label" for="rt_mode">后端模式</label>
-          <select id="rt_mode" data-rt="backend_mode">{opts or '<option value="">（当前没有可选项）</option>'}</select>
-          <div class="cf-help">决定机器人怎么连接 QQ（内置 / 外部 NapCat 等）</div></div>
-        <div style="margin:6px 0 12px">{desc}</div>
-        {pp.info_table([
-            ('向导是否完成', '是' if st.get('wizard_completed') else '否'),
+    cur = str(st.get('backend_mode') or '')
+    picks = ''.join(
+        f'<label class="cf-field" style="display:flex;gap:10px;align-items:flex-start;'
+        f'border:1px solid var(--border,#e5e7eb);border-radius:10px;padding:10px 12px;margin:8px 0;cursor:pointer">'
+        f'<input type="radio" name="rt_pick" value="{esc(k)}" data-act="rt-pick"'
+        f'{" checked" if k == cur else ""} style="margin-top:3px">'
+        f'<span><b>{esc(v.get("label") or k)}</b>'
+        + (f' <span class="el-tag info">风险 {esc(v.get("risk"))}/5</span>' if v.get('risk') else '')
+        + f'<div class="cf-help" style="margin-top:2px">{esc(v.get("desc") or "")}</div></span></label>'
+        for k, v in modes.items())
+    return (
+        card('🛠️ 后端模式（单选）', f"""
+          <div class="cf-form">
+            <div class="cf-help" style="margin-bottom:6px">
+              决定机器人怎么连接 QQ。选中的模式会写进
+              <code>runtime.json</code>，下次启动按它直启。
+            </div>
+            {picks or '<div class="cf-help">（当前没有可选项）</div>'}
+            <input type="hidden" id="rt_mode" data-rt="backend_mode" value="{esc(cur)}">
+            <div id="rtMsg" style="font-size:12px;color:var(--text-secondary);margin-top:6px"></div>
+          </div>""")
+        + card('📋 当前状态', pp.info_table([
+            ('向导是否完成', '是' if st.get('wizard_completed') or st.get('inited') else '否'),
             ('风险已确认', '是' if st.get('risk_acknowledged') else '否'),
             ('需要重跑向导', '是' if st.get('needs_wizard') else '否'),
-        ])}
-        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
-          <button class="btn btn-default" data-act="reset-wizard">🔄 重跑启动向导</button>
-        </div>
-        <div id="rtMsg" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
-      </div>""")
+        ]))
+        + card('⚙️ 操作', """
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn btn-default" data-act="reset-wizard">🔄 重跑启动向导</button>
+          </div>
+          <div class="cf-help" style="margin-top:8px">
+            「重跑启动向导」会把引导状态清空，下次启动重新选使用方式（不影响已建账号）。
+          </div>""")
+    )
 
 
 def _settings_auth(ctx):

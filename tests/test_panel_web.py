@@ -432,3 +432,43 @@ class BotAvatarFallbackTest(unittest.TestCase):
         self.assertIn("data:image/svg+xml", self.js, "要有不依赖文件的内联兜底")
         self.assertIn("naturalWidth === 0", self.js, "文件不存在要立刻兜底")
 
+
+class RuntimePageLayoutTest(unittest.TestCase):
+    """运行方式页：后端模式是**单选**，右侧按大类分**多张卡片**（用户要求）"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountManager
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        cls.panel = ManagerWebPanel(AccountManager(accounts_dir=base / "accounts"),
+                                    lambda: None, app_state=cls.state)
+        cls.html = cls.panel.app.test_client().get("/ui/page/settings-runtime").get_json()["data"]["html"]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_uses_radios_not_select(self):
+        self.assertGreaterEqual(self.html.count('type="radio"'), 2, "至少两个模式可选")
+        self.assertIn('data-act="rt-pick"', self.html)
+        self.assertNotIn("<select", self.html, "不能再用下拉框")
+
+    def test_hidden_input_keeps_save_working(self):
+        self.assertIn('data-rt="backend_mode"', self.html, "保存仍靠 data-rt 约定")
+        self.assertIn('type="hidden"', self.html)
+
+    def test_multiple_cards_by_category(self):
+        self.assertGreaterEqual(self.html.count('class="card"'), 3,
+                                "按大类分卡片：后端模式 / 当前状态 / 操作")
+        for title in ("后端模式", "当前状态", "操作"):
+            self.assertIn(title, self.html)
+
