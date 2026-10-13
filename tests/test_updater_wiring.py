@@ -138,3 +138,54 @@ class EndpointTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RpcEnvelopeTest(unittest.TestCase):
+    """桌面 RPC 的信封约定：Transport 传 {method, body} —— 必须拆包后再交给业务函数"""
+
+    def _wrapper(self, fn):
+        from astercore.launch import _reg_rpc
+
+        class FakeHub:
+            def __init__(self):
+                self.handlers = {}
+
+            def register(self, path, h):
+                self.handlers[path] = h
+
+        hub = FakeHub()
+        _reg_rpc(hub, "/x", fn)
+        return hub.handlers["/x"]
+
+    def test_unwraps_body(self):
+        seen = []
+
+        def fn(payload):
+            seen.append(payload)
+            return {"got": payload}
+
+        h = self._wrapper(fn)
+        r = h({"method": "POST", "body": {"account_id": "10001", "display_name": "x"}})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(seen[0], {"account_id": "10001", "display_name": "x"},
+                         "必须把 body 拆出来当业务参数（否则取值永远为 None）")
+
+    def test_get_without_body(self):
+        seen = []
+        h = self._wrapper(lambda payload: seen.append(payload) or {"ok": True})
+        h({"method": "GET"})
+        self.assertEqual(seen[0], {}, "GET 没有 body → 传空 dict 给业务函数")
+
+    def test_errors_become_ok_false(self):
+        def boom(payload):
+            raise ValueError("缺少 account_id")
+        r = self._wrapper(boom)({"method": "POST", "body": {}})
+        self.assertFalse(r["ok"])
+        self.assertIn("缺少 account_id", r["error"])
+
+    def test_plain_payload_passthrough(self):
+        seen = []
+        h = self._wrapper(lambda payload: seen.append(payload) or {"ok": True})
+        h({"key": "napcat"})
+        self.assertEqual(seen[0], {"key": "napcat"}, "非信封形状原样透传")
+

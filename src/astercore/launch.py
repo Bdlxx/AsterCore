@@ -17,14 +17,22 @@ import sys
 from pathlib import Path
 
 def _reg_rpc(hub, path, fn):
-    """注册桌面 RPC：返回值统一包成 {ok,data}/{ok,error}，与 HTTP 那份形状一致。
+    """注册桌面 RPC：**拆信封** + 返回值统一包成 {ok,data}/{ok,error}，与 HTTP 形状一致。
 
-    刻意放在**模块级**：函数内的 `_reg` 定义有先后顺序问题（我为此踩过两次
-    UnboundLocalError，且被 except 吞掉 → 整块 RPC 静默失效）。
+    两个踩过的坑都收在这里，避免再犯：
+    1) 前端 Transport 调 `rpc(url, {method, body})` —— 所以进到处理函数的**不是**业务参数，
+       而是 `{"method": "...", "body": {...}}`。不拆包的话 `p.get("account_id")` 永远是 None
+       （用户报的"save-account 失败：ValueError: 缺少 account_id"就是这个）。
+    2) 函数内 def 的先后顺序：统一用模块级函数，避免 UnboundLocalError 被 except 吞掉。
     """
     def _h(p=None):
+        payload = p
+        if isinstance(p, dict) and ("method" in p or "body" in p):
+            payload = p.get("body")
+            if payload is None:                  # GET：没有 body，就把非信封字段当参数
+                payload = {k: v for k, v in p.items() if k not in ("method", "body")}
         try:
-            return {"ok": True, "data": fn(p)}
+            return {"ok": True, "data": fn(payload)}
         except Exception as e:                  # noqa: BLE001
             return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
     hub.register(path, _h)
