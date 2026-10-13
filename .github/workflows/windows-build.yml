@@ -94,10 +94,17 @@ jobs:
         shell: pwsh
         run: |
           # 更新器要用 sha256 校验下载到的包：为每个 zip 生成 <zip>.sha256，随 Release 一起上传
-          Get-ChildItem dist/*.zip | ForEach-Object {
-            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$h  $($_.Name)" | Set-Content "$($_.FullName).sha256" -Encoding ascii
-            Write-Host "checksum: $($_.Name) $h"
+          # 注意：zip 实际落在仓库根（见 Publish 的 files: AsterCore-win64-*.zip），
+          # 所以两个可能的位置都扫一遍；找不到就报错，不允许"静默不生成"。
+          $zips = @()
+          $zips += Get-ChildItem -Path "$PWD" -Filter "AsterCore-win64-*.zip" -File -ErrorAction SilentlyContinue
+          $zips += Get-ChildItem -Path "$PWD/dist" -Filter "AsterCore-win64-*.zip" -File -ErrorAction SilentlyContinue
+          $zips = $zips | Sort-Object FullName -Unique
+          if (-not $zips) { throw "没找到 AsterCore-win64-*.zip，无法生成校验文件" }
+          foreach ($z in $zips) {
+            $h = (Get-FileHash $z.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($z.Name)" | Set-Content "$($z.FullName).sha256" -Encoding ascii
+            Write-Host "checksum: $($z.FullName) $h"
           }
 
       - name: Publish release (tag)
