@@ -517,3 +517,51 @@ class MergedSettingsPageTest(unittest.TestCase):
         for gone in ("settings-runtime", "settings-auth", "settings-page"):
             self.assertNotIn(gone, nav, f"侧栏导航不应再列出 {gone}")
 
+
+class AccountsPageLayoutTest(unittest.TestCase):
+    """账号页（用户要求）：横向长条列表 + 右上角「添加账号」弹窗，去掉内嵌表单"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountManager
+            from astercore.core.manager import AccountConfig
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        cls.mgr = AccountManager(accounts_dir=base / "accounts")
+        for i, aid in enumerate(("10001", "10002")):
+            cls.mgr.save_config(AccountConfig(account_id=aid, display_name="号" + aid,
+                                              backend_name="onebot"))
+        cls.panel = ManagerWebPanel(cls.mgr, lambda: None, app_state=cls.state)
+        cls.html = cls.panel.app.test_client().get("/ui/page/accounts").get_json()["data"]["html"]
+        cls.index = (ROOT / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_rows_are_horizontal_lines(self):
+        self.assertEqual(self.html.count('class="acct-line"'), 2, "两个账号 → 两条横向长条")
+
+    def test_add_button_in_card_header(self):
+        self.assertIn('data-act="acct-add"', self.html)
+        self.assertIn("＋ 添加账号", self.html)
+
+    def test_form_moved_into_dialog(self):
+        self.assertIn('id="acctDlg"', self.html, "要弹窗")
+        self.assertNotIn("➕ 新建 / 编辑账号", self.html, "页面里不应再有内嵌新建表单卡片")
+        # 弹窗里仍要有 data-acct 字段，保存逻辑才能不改
+        for f in ("account_id", "display_name", "ws_url", "http_url", "access_token"):
+            self.assertIn(f'data-acct="{f}"', self.html)
+
+    def test_index_handles_dialog_actions(self):
+        for act in ("acct-add", "acct-edit", "acct-dlg-cancel"):
+            self.assertIn(f"'{act}':", self.index, f"{act} 处理器要在")
+

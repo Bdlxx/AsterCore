@@ -362,6 +362,43 @@ PANEL.hooks = {
   },
   groupSelect: function () { return { groups: PANEL.hooks.groupCache || [], error: PANEL.hooks.groupErr || '' }; },
   actions: {
+    'acct-add': function () {
+      PANEL.hooks._editing = null;
+      const put = function (id, v) { const el = document.getElementById(id); if (el) { el.value = v; } };
+      put('ac_id', ''); put('ac_name', '');
+      put('ac_ws', 'ws://127.0.0.1:3001'); put('ac_http', 'http://127.0.0.1:3000'); put('ac_token', '');
+      const idEl = document.getElementById('ac_id');
+      if (idEl) { idEl.readOnly = false; }
+      const ttl = document.getElementById('acctDlgTitle');
+      if (ttl) { ttl.textContent = '添加账号'; }
+      const dlg = document.getElementById('acctDlg');
+      if (dlg) { dlg.hidden = false; }
+      if (idEl) { idEl.focus(); }
+      return { ok: true, message: '填写账号信息后点「保存」' };
+    },
+    'acct-edit': function (el) {
+      const aid = el.getAttribute('data-key') || '';
+      PANEL.hooks._editing = aid;
+      const put = function (id, v) { const x = document.getElementById(id); if (x) { x.value = v; } };
+      put('ac_id', aid);
+      put('ac_name', el.getAttribute('data-name') || '');
+      put('ac_ws', el.getAttribute('data-ws') || 'ws://127.0.0.1:3001');
+      put('ac_http', el.getAttribute('data-http') || 'http://127.0.0.1:3000');
+      put('ac_token', el.getAttribute('data-token') || '');
+      const idEl = document.getElementById('ac_id');
+      if (idEl) { idEl.readOnly = true; }        /* 编辑时不让改 ID（它是目录名） */
+      const ttl = document.getElementById('acctDlgTitle');
+      if (ttl) { ttl.textContent = '编辑账号 ' + aid; }
+      const dlg = document.getElementById('acctDlg');
+      if (dlg) { dlg.hidden = false; }
+      return { ok: true, message: '已载入账号 ' + aid };
+    },
+    'acct-dlg-cancel': function () {
+      const dlg = document.getElementById('acctDlg');
+      if (dlg) { dlg.hidden = true; }
+      PANEL.hooks._editing = null;
+      return { ok: true, message: '已取消' };
+    },
     'save-rt': async function (btn) {
       await PANEL.runBusy(btn, '保存中…', async function () {
         const r = await post('/api/settings/runtime', collectForm('rt'));

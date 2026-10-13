@@ -102,51 +102,79 @@ def _account_card(a):
       </div>"""
 
 
-def _accounts(ctx):
-    accounts = ctx.get('accounts') or []
-    cur = esc(ctx.get('current') or '')
-    editing = ctx.get('editing') or {}
-    body = ('<div class="stat-grid">' + ''.join(_account_card(a) for a in accounts) + '</div>'
-            if accounts else
-            '<div style="padding:20px;color:var(--text-secondary);text-align:center">还没有账号，用下面的表单新建一个</div>')
-
-    # 新建/编辑：同一个表单，编辑时填好现值
-    is_edit = bool(editing)
-    t = {
-        'id': esc(editing.get('account_id') or ''),
-        'name': esc(editing.get('display_name') or ''),
-        'ws': esc(editing.get('ws_url') or 'ws://127.0.0.1:3001'),
-        'http': esc(editing.get('http_url') or 'http://127.0.0.1:3000'),
-        'token': esc(editing.get('access_token') or ''),
-    }
-    form = f"""
-      <div class="cf-form">
-        <div class="cf-group">{'编辑账号 ' + t['id'] if is_edit else '新建账号'}</div>
-        <div class="cf-field"><label class="cf-label" for="ac_id">账号 ID（QQ 号）</label>
-          <input type="text" id="ac_id" value="{t['id']}" {'readonly' if is_edit else ''}
-                 placeholder="例如 10001" data-acct="account_id"></div>
-        <div class="cf-field"><label class="cf-label" for="ac_name">显示名</label>
-          <input type="text" id="ac_name" value="{t['name']}" placeholder="例如 依星" data-acct="display_name"></div>
-        <div class="cf-field"><label class="cf-label" for="ac_ws">WebSocket 地址</label>
-          <input type="text" id="ac_ws" value="{t['ws']}" data-acct="ws_url">
-          <div class="cf-help">NapCat 的 OneBot WebSocket，例如 ws://127.0.0.1:3001</div></div>
-        <div class="cf-field"><label class="cf-label" for="ac_http">HTTP 地址</label>
-          <input type="text" id="ac_http" value="{t['http']}" data-acct="http_url">
-          <div class="cf-help">用于发文件/取群列表等，例如 http://127.0.0.1:3000</div></div>
-        <div class="cf-field"><label class="cf-label" for="ac_token">Access Token</label>
-          <input type="password" id="ac_token" value="{t['token']}" autocomplete="new-password" data-acct="access_token">
-          <div class="cf-help">NapCat 里配置的 token，没设就留空</div></div>
-        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
-          <button class="btn btn-primary" data-act="{'save-account' if is_edit else 'create-account'}"
-                  data-key="{t['id']}">{'保存修改' if is_edit else '创建账号'}</button>
-          {'<button class="btn btn-default" data-act="cancel-edit">取消</button>' if is_edit else ''}
+def _account_row(a):
+    """账号**横向长条**（用户要求：列表里账号为横向长条，操作按钮在同一行右侧）"""
+    aid = esc(a.get('account_id'))
+    running = bool(a.get('running'))
+    backend = esc(a.get('backend_name') or '')
+    name = esc(a.get('display_name') or a.get('account_id'))
+    initial = (str(a.get('display_name') or aid or '?')[:1])
+    tag = ('<span class="el-tag success"><span class="status-dot green"></span> 运行中</span>'
+           if running else
+           '<span class="el-tag muted"><span class="status-dot red"></span> 已停止</span>')
+    return f"""
+      <div class="acct-line" style="display:flex;align-items:center;gap:12px;padding:10px 12px;
+           border:1px solid var(--border,#e5e7eb);border-radius:10px;margin:8px 0">
+        <div style="width:34px;height:34px;border-radius:50%;background:#2b6cff;color:#fff;
+             display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">{esc(initial)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600">{name}</div>
+          <div style="font-size:12px;color:var(--text-secondary)">ID {aid} · {backend}</div>
         </div>
-        <div id="acMsg" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
+        <div style="flex:0 0 auto">{tag}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;flex:0 0 auto">
+          <button class="btn btn-primary mini" data-act="start" data-key="{aid}">启动</button>
+          <button class="btn btn-default mini" data-act="stop" data-key="{aid}">停止</button>
+          <button class="btn btn-default mini" data-act="acct-edit" data-key="{aid}"
+            data-ws="{esc(a.get('ws_url') or '')}" data-http="{esc(a.get('http_url') or '')}"
+            data-token="{esc(a.get('access_token') or '')}" data-name="{name}">编辑</button>
+          <button class="btn btn-default mini" data-act="del-account" data-key="{aid}">删除</button>
+        </div>
       </div>"""
 
-    return (card('👥 账号列表', body,
-                 extra=f'<span style="font-size:12px;color:var(--text-secondary)">{len(accounts)} 个账号</span>')
-            + card('➕ 新建 / 编辑账号', form))
+
+def _acct_dialog() -> str:
+    """添加/编辑账号的**弹窗**（替代原来页面底部的内嵌表单；字段与 data-acct 约定不变）"""
+    return """
+    <div class="ui-modal" id="acctDlg" role="dialog" aria-modal="true" hidden>
+      <div class="ui-modal-backdrop" data-act="acct-dlg-cancel"></div>
+      <div class="ui-modal-box">
+        <h2 class="ui-modal-title" id="acctDlgTitle">添加账号</h2>
+        <div class="cf-form">
+          <div class="cf-field"><label class="cf-label" for="ac_id">账号 ID（QQ 号）</label>
+            <input type="text" id="ac_id" placeholder="例如 10001" data-acct="account_id"></div>
+          <div class="cf-field"><label class="cf-label" for="ac_name">显示名</label>
+            <input type="text" id="ac_name" placeholder="例如 依星" data-acct="display_name"></div>
+          <div class="cf-field"><label class="cf-label" for="ac_ws">WebSocket 地址</label>
+            <input type="text" id="ac_ws" value="ws://127.0.0.1:3001" data-acct="ws_url">
+            <div class="cf-help">NapCat 的 OneBot WebSocket，例如 ws://127.0.0.1:3001</div></div>
+          <div class="cf-field"><label class="cf-label" for="ac_http">HTTP 地址</label>
+            <input type="text" id="ac_http" value="http://127.0.0.1:3000" data-acct="http_url"></div>
+          <div class="cf-field"><label class="cf-label" for="ac_token">Access Token</label>
+            <input type="password" id="ac_token" autocomplete="new-password" data-acct="access_token">
+            <div class="cf-help">NapCat 里配置的 token，没设就留空</div></div>
+          <div id="acMsg" style="font-size:12px;color:var(--text-secondary);margin-top:8px"></div>
+        </div>
+        <div class="ui-modal-actions">
+          <button class="btn btn-default" data-act="acct-dlg-cancel">取消</button>
+          <button class="btn btn-primary" data-act="save-account" id="acctDlgSave">保存</button>
+        </div>
+      </div>
+    </div>"""
+
+
+def _accounts(ctx):
+    """账号页（用户要求）：列表里**横向长条**；新建/编辑移到列表右上角**弹窗**"""
+    accounts = ctx.get('accounts') or []
+    body = (''.join(_account_row(a) for a in accounts) if accounts else
+            '<div style="padding:20px;color:var(--text-secondary);text-align:center">'
+            '还没有账号，点右上角「＋ 添加账号」新建一个</div>')
+    extra = ('<span style="display:flex;gap:8px;align-items:center">'
+             f'<span style="font-size:12px;color:var(--text-secondary)">{len(accounts)} 个账号</span>'
+             '<button class="btn btn-primary mini" data-act="acct-add">＋ 添加账号</button></span>')
+    return card('👥 账号列表', body, extra=extra) + _acct_dialog()
+
+
 
 
 # ---------------------------------------------------------------- 运行方式 / 安全设置
@@ -339,7 +367,7 @@ def _guide_page(ctx):
       </div>""")
 
 
-_orig_accounts = PAGES['accounts'][0]
+_orig_accounts = _accounts          # 必须指向最新实现（否则改版不生效）
 
 
 def _accounts_with_guide(ctx):
