@@ -340,8 +340,11 @@ PANEL.hooks = {
   saveRestart: function (btn) { PANEL.saveConfig(btn, true); },
   restart: async function () {
     if (!AID) return { ok: false, error: '没有当前账号' };
-    await post(acctUrl('/stop'));
-    return post(acctUrl('/start'));
+    /* 桌面 file:// 只认固定路径（动态 acctUrl 到不了） */
+    await post('/api/app/account-stop', { account_id: AID });
+    const r = await post('/api/app/account-start', { account_id: AID });
+    if (r && r.ok) { await loadAccounts(); PANEL.renderPage(); }
+    return r || { ok: false, error: '重启失败' };
   },
   loadGroups: async function (force) {
     if (!AID) return [];
@@ -578,17 +581,27 @@ PANEL.hooks = {
       if (box) { box.style.display = 'block'; box.textContent = (r && r.ok) ? (((r.data || {}).lines || []).join('\n') || '暂无日志') : ((r && r.error) || '取日志失败'); }
       return { ok: !!(r && r.ok), message: (r && r.ok) ? '日志已更新' : ((r && r.error) || '取日志失败') };
     },
-    start: async function (el) { return post(acctUrl('/start'), undefined); },
-    stop: async function (el) { return post(acctUrl('/stop'), undefined); },
+    start: async function (el) {
+      const aid = (el && el.getAttribute('data-key')) || AID;
+      const r = await post('/api/app/account-start', { account_id: aid });
+      if (r && r.ok) { AID = aid; await loadAccounts(); PANEL.renderPage(); }
+      return r || { ok: false, error: '启动失败' };
+    },
+    stop: async function (el) {
+      const aid = (el && el.getAttribute('data-key')) || AID;
+      const r = await post('/api/app/account-stop', { account_id: aid });
+      if (r && r.ok) { await loadAccounts(); PANEL.renderPage(); }
+      return r || { ok: false, error: '停止失败' };
+    },
     'reload-plugins': async function (el) { return post(acctUrl('/plugins/reload')); },
     'create-account': async function (el) {
       const f = collectForm('acct');
       if (!f.account_id) { formMsg('acMsg', '账号 ID 必填', true); return { ok: false, error: '账号 ID 必填' }; }
-      const r = await post('/api/accounts', {
+      const r = await post('/api/app/account-save', {
         account_id: f.account_id, display_name: f.display_name || f.account_id,
         backend: { ws_url: f.ws_url, http_url: f.http_url, access_token: f.access_token }
       });
-      if (r && r.ok) { AID = f.account_id; await loadAccounts(); await loadPlugins(); PANEL.toast('账号已创建', 'success'); PANEL.renderPage(); }
+      if (r && r.ok) { AID = f.account_id; await loadAccounts(); await loadPlugins(); PANEL.toast('账号已创建', 'success'); const dlg = document.getElementById('acctDlg'); if (dlg) { dlg.hidden = true; } PANEL.renderPage(); }
       else formMsg('acMsg', (r && r.error) || '创建失败', true);
       return r || { ok: false };
     },
@@ -603,17 +616,18 @@ PANEL.hooks = {
     },
     'save-account': async function (el) {
       const f = collectForm('acct');
-      const r = await post('/api/accounts/' + encodeURIComponent(f.account_id) + '/update', {
-        display_name: f.display_name, backend: { ws_url: f.ws_url, http_url: f.http_url, access_token: f.access_token }
+      const r = await post('/api/app/account-save', {
+        account_id: f.account_id, display_name: f.display_name,
+        backend: { ws_url: f.ws_url, http_url: f.http_url, access_token: f.access_token }
       });
-      if (r && r.ok) { PANEL.hooks._editing = null; await loadAccounts(); PANEL.toast('账号已保存', 'success'); PANEL.renderPage(); }
+      if (r && r.ok) { PANEL.hooks._editing = null; await loadAccounts(); PANEL.toast('账号已保存', 'success'); const dlg = document.getElementById('acctDlg'); if (dlg) { dlg.hidden = true; } PANEL.renderPage(); }
       else formMsg('acMsg', (r && r.error) || '保存失败', true);
       return r || { ok: false };
     },
     'cancel-edit': async function () { PANEL.hooks._editing = null; await PANEL.renderPage(); return { ok: true, message: '已取消' }; },
     'del-account': async function (el) {
       const aid = el.getAttribute('data-key');
-      const r = await post('/api/accounts/' + encodeURIComponent(aid) + '/delete');
+      const r = await post('/api/app/account-delete', { account_id: aid });
       if (r && r.ok) { if (AID === aid) AID = ''; await loadAccounts(); await loadPlugins(); PANEL.toast('账号已删除', 'success'); PANEL.renderPage(); }
       return r || { ok: false };
     },

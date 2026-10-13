@@ -648,3 +648,37 @@ class ToastAboveModalTest(unittest.TestCase):
         mz = int(modal[0].split("z-index:")[1].split(";")[0])
         self.assertGreater(tz, mz, "提示层级必须高于弹窗")
 
+
+class AccountFixedPathRpcTest(unittest.TestCase):
+    """桌面 file:// 只认固定路径的 hub 方法 —— 账号四类操作都必须走固定路径"""
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.index = (root / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+        self.launch = (root / "src" / "astercore" / "launch.py").read_text(encoding="utf-8")
+
+    def test_index_uses_fixed_paths(self):
+        for url in ("/api/app/account-save", "/api/app/account-delete",
+                    "/api/app/account-start", "/api/app/account-stop"):
+            self.assertIn(url, self.index, f"前端要用固定路径 {url}")
+        self.assertNotIn("acctUrl('/start')", self.index, "不要再拼动态路径")
+        self.assertNotIn("acctUrl('/stop')", self.index, "不要再拼动态路径")
+
+    def test_launch_registers_them(self):
+        for url in ("/api/app/account-save", "/api/app/account-delete",
+                    "/api/app/account-start", "/api/app/account-stop"):
+            self.assertIn(f'_reg_rpc(hub, "{url}"', self.launch, f"{url} 要注册成 RPC")
+
+    def test_no_local_reg_before_definition(self):
+        """踩过两次的坑：函数内 _reg 定义之前的调用 → UnboundLocalError 被 except 吞掉"""
+        def_line = self.launch.find("def _reg(path, fn):")   # 不存在也没关系
+        if def_line < 0:
+            return
+        import re as _re
+        for m in _re.finditer(r'^\s+_reg\(', self.launch, _re.M):
+            self.assertGreater(m.start(), def_line,
+                               "函数内 _reg(...) 调用不能出现在它的定义之前（改用模块级 _reg_rpc）")
+
+    def test_dialog_closes_after_save(self):
+        self.assertGreaterEqual(self.index.count("acctDlg') ;") + self.index.count("getElementById('acctDlg')"), 2)
+

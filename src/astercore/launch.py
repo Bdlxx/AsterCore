@@ -16,6 +16,20 @@ import socket
 import sys
 from pathlib import Path
 
+def _reg_rpc(hub, path, fn):
+    """注册桌面 RPC：返回值统一包成 {ok,data}/{ok,error}，与 HTTP 那份形状一致。
+
+    刻意放在**模块级**：函数内的 `_reg` 定义有先后顺序问题（我为此踩过两次
+    UnboundLocalError，且被 except 吞掉 → 整块 RPC 静默失效）。
+    """
+    def _h(p=None):
+        try:
+            return {"ok": True, "data": fn(p)}
+        except Exception as e:                  # noqa: BLE001
+            return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+    hub.register(path, _h)
+
+
 from astercore import __version__
 from astercore import paths as _paths
 from astercore.app import validate_web_cfg
@@ -449,19 +463,19 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
                 return {"ok": bool(ok), "msg": str(msg), "state": _snap()}
             return _h
 
-        _reg("/api/app/state", lambda p=None: _snap())
-        _reg("/api/app/accounts", lambda p=None: _accounts())
+        _reg_rpc(hub, "/api/app/state", lambda p=None: _snap())
+        _reg_rpc(hub, "/api/app/accounts", lambda p=None: _accounts())
         if controller is not None:
-            _reg("/api/app/start", _act(controller.start))
-            _reg("/api/app/stop", _act(controller.stop))
-            _reg("/api/app/restart", _act(controller.restart))
+            _reg_rpc(hub, "/api/app/start", _act(controller.start))
+            _reg_rpc(hub, "/api/app/stop", _act(controller.stop))
+            _reg_rpc(hub, "/api/app/restart", _act(controller.restart))
 
         def _current(p=None):
             aid = str((p or {}).get("aid") or "")
             if controller is not None and aid:
                 controller.set_current_account(aid)
             return _snap()
-        _reg("/api/app/account-current", _current)
+        _reg_rpc(hub, "/api/app/account-current", _current)
 
         def _setup_state(p=None):
             port = _SP_DEFAULT
@@ -499,8 +513,8 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
                 return {"ok": True, "page_mode": mode, "port": cfg["port"], "restart_needed": True}
             return {"ok": True, "page_mode": mode, "restart_needed": True}
 
-        _reg("/api/setup/state", _setup_state)
-        _reg("/api/setup/page", _setup_page)
+        _reg_rpc(hub, "/api/setup/state", _setup_state)
+        _reg_rpc(hub, "/api/setup/page", _setup_page)
     except Exception:                       # noqa: BLE001 注册失败不能拖垮启动
         logging.getLogger("astercore.launch").exception("桌面 RPC 接口注册失败")
 
@@ -574,24 +588,24 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
                 return payload
             raise RuntimeError(str(payload))        # _reg 会包成 {ok:false,error}
 
-        _reg("/api/guide/status", _g_status)
-        _reg("/api/guide/install", _g_install)
-        _reg("/api/guide/config", _g_config)
-        _reg("/api/guide/host", _g_host)
-        _reg("/api/guide/stop", _g_stop)
-        _reg("/api/guide/qr", _g_qr)
-        _reg("/api/guide/log", _g_log)
-        _reg("/api/guide/discover", _g_discover)
-        _reg("/api/guide/account", _guide_create_account)
+        _reg_rpc(hub, "/api/guide/status", _g_status)
+        _reg_rpc(hub, "/api/guide/install", _g_install)
+        _reg_rpc(hub, "/api/guide/config", _g_config)
+        _reg_rpc(hub, "/api/guide/host", _g_host)
+        _reg_rpc(hub, "/api/guide/stop", _g_stop)
+        _reg_rpc(hub, "/api/guide/qr", _g_qr)
+        _reg_rpc(hub, "/api/guide/log", _g_log)
+        _reg_rpc(hub, "/api/guide/discover", _g_discover)
+        _reg_rpc(hub, "/api/guide/account", _guide_create_account)
     except Exception:                       # noqa: BLE001
         logging.getLogger("astercore.launch").exception("引导 RPC 接口注册失败")
 
     try:
         from astercore.web.appapi import _session as _app_session
 
-        _reg("/api/app/update/status", lambda p=None: _app_session().status())
-        _reg("/api/app/update/check", lambda p=None: _app_session().check())
-        _reg("/api/app/update/start", lambda p=None: _app_session().start())
+        _reg_rpc(hub, "/api/app/update/status", lambda p=None: _app_session().status())
+        _reg_rpc(hub, "/api/app/update/check", lambda p=None: _app_session().check())
+        _reg_rpc(hub, "/api/app/update/start", lambda p=None: _app_session().start())
 
         def _update_apply(p=None):
             from astercore import updater as _u2
@@ -604,7 +618,7 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
             _quit()                            # 关掉本进程，脚本替换目录后重新拉起
             return {"applied": True, "hint": "程序将退出并应用更新"}
 
-        _reg("/api/app/update/apply", _update_apply)
+        _reg_rpc(hub, "/api/app/update/apply", _update_apply)
     except Exception:                       # noqa: BLE001
         logging.getLogger("astercore.launch").exception("更新 RPC 注册失败")
 
@@ -627,7 +641,62 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
             raise ValueError("只允许 http/https 链接")
         return {"opened": bool(_wb.open(url, new=2)), "url": url}
 
-    _reg("/api/app/open-url", _open_url)
+    _reg_rpc(hub, "/api/app/open-url", _open_url)
+    # 账号操作（**固定路径**，RPC 只认固定名）：新建/保存/删除/启停
+    try:
+        from astercore.core.manager import AccountConfig as _ACct2
+
+        def _acct_save(p=None):
+            d = p or {}
+            aid = str(d.get("account_id") or "").strip()
+            if not aid:
+                raise ValueError("缺少 account_id")
+            b = d.get("backend") or {}
+            old = mgr.get_config(aid)
+            mgr.save_config(_ACct2(
+                account_id=aid,
+                display_name=str(d.get("display_name") or (old.display_name if old else aid)),
+                backend_name=str(b.get("name") or (old.backend_name if old else "onebot")),
+                ws_url=str(b.get("ws_url") or (old.ws_url if old else "ws://127.0.0.1:3001")),
+                http_url=str(b.get("http_url") or (old.http_url if old else "http://127.0.0.1:3000")),
+                access_token=str(b.get("access_token") if "access_token" in b
+                                 else (old.access_token if old else "")),
+            ))
+            return {"account_id": aid, "saved": True, "created": old is None}
+
+        def _acct_del(p=None):
+            aid = str((p or {}).get("account_id") or "").strip()
+            if not aid:
+                raise ValueError("缺少 account_id")
+            fn = getattr(mgr, "delete", None) or getattr(mgr, "remove", None)
+            if fn is None:
+                raise RuntimeError("当前管理器不支持删除账号")
+            fn(aid)
+            return {"account_id": aid, "deleted": True}
+
+        def _acct_act(action):
+            def _h(p=None):
+                aid = str((p or {}).get("account_id") or "").strip()
+                if not aid:
+                    raise ValueError("缺少 account_id")
+                import asyncio as _aio
+                loop = asyncio.get_event_loop()
+                coro = getattr(mgr, action)(aid)
+                if loop.is_running():
+                    fut = _aio.run_coroutine_threadsafe(coro, loop)
+                    fut.result(timeout=120)
+                else:
+                    loop.run_until_complete(coro)
+                return {"account_id": aid, action: True}
+            return _h
+
+        _reg_rpc(hub, "/api/app/account-save", _acct_save)
+        _reg_rpc(hub, "/api/app/account-delete", _acct_del)
+        _reg_rpc(hub, "/api/app/account-start", _acct_act("start"))
+        _reg_rpc(hub, "/api/app/account-stop", _acct_act("stop"))
+    except Exception:                       # noqa: BLE001
+        logging.getLogger("astercore.launch").exception("账号操作 RPC 注册失败")
+
     # 账号 CRUD：桌面 file:// 模式下 fetch('/api/accounts') 会被转成 hub 方法，
     # 不注册就走不通（用户报的"失败，账号未配置"就是这个）——固定路径逐个注册，
     # 动态路径（/api/accounts/<id>/...）用前缀兜底分发。
@@ -659,7 +728,7 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
             ))
             return {"account_id": aid}
 
-        _reg("/api/accounts", lambda p=None: _acct_rows() if p is None or p == {} else _acct_create(p))
+        _reg_rpc(hub, "/api/accounts", lambda p=None: _acct_rows() if p is None or p == {} else _acct_create(p))
 
         def _acct_dyn(p=None):
             """动态账号路径兜底：/api/accounts/<id>/{update,delete,start,stop}"""
@@ -691,7 +760,7 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
                 return {"account_id": aid, "started": True}     # 真正起停由面板按钮走 /api/app/*
             return {"account_id": aid, "stopped": True}
 
-        _reg("/api/app/account-dyn", _acct_dyn)
+        _reg_rpc(hub, "/api/app/account-dyn", _acct_dyn)
     except Exception:                       # noqa: BLE001
         logging.getLogger("astercore.launch").exception("账号 CRUD RPC 注册失败")
 
