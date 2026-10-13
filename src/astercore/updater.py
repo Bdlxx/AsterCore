@@ -254,3 +254,127 @@ def update_flow(current_version: str, download_dir: str | Path,
     return {"ok": True, "available": True, "version": info.get("version"),
             "verified": bool(expect), "sha256": digest, "size": size,
             "staged": meta["staged_dir"], "script": str(script)}
+
+
+# ---------------------------------------------------------------- 启动钩子
+def _looks_like_distribution(base: Path) -> bool:
+    """只有"装出来的目录"才做更新与回滚；源码运行（仓库里）绝不动任何东西。"""
+    import sys
+    if not getattr(sys, "frozen", False):
+        return False
+    return (base / EXE_NAME).is_file() or (base / "_internal").is_dir()
+
+
+def try_rollback(base_dir: str | Path) -> str:
+    """启动**最早期**调用：上次更新若没起起来就还原旧版本（源码运行不做任何事）"""
+    base = Path(base_dir)
+    if not _looks_like_distribution(base):
+        return ""
+    return rollback_if_needed(base)
+
+
+def confirm_boot(base_dir: str | Path) -> bool:
+    """启动成功（面板/窗口已就绪）后调用：写 .boot-ok 并清理 _old，使回滚不再触发"""
+    base = Path(base_dir)
+    if not _looks_like_distribution(base):
+        return False
+    mark_boot_ok(base)
+    cleanup_old(base)
+    return True
+
+
+def apply_now(script: str | Path, exe_dir: str | Path | None = None) -> bool:
+    """交给系统执行交接脚本（它自己等本进程退出再替换）。失败返回 False。"""
+    import subprocess
+    script = str(script)
+    if not Path(script).is_file():
+        return False
+    try:
+        flags = 0
+        if os.name == "nt":
+            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            subprocess.Popen(["cmd", "/c", script], cwd=str(exe_dir or Path(script).parent),
+                             creationflags=flags, close_fds=True)
+        else:
+            subprocess.Popen(["sh", script], cwd=str(exe_dir or Path(script).parent), start_new_session=True)
+        return True
+    except Exception as e:                            # noqa: BLE001
+        log.error("启动交接脚本失败：%s", e)
+        return False
+
+
+# ---------------------------------------------------------------- 会话（HTTP 与 RPC 共用）
+class UpdateSession:
+    """把"检查 → 下载 → 校验 → 暂存"的状态与进度集中在一处，两个端共用同一份实现。
+
+    UI 只要轮询 status()；start() 是异步的（后台线程），重复点不会起第二个任务。
+    """
+
+    def __init__(self, current_version: str, install_dir: str | Path,
+                 download_dir: str | Path | None = None) -> None:
+        import threading
+        self.current = str(current_version)
+        self.install_dir = Path(install_dir)
+        self.download_dir = Path(download_dir) if download_dir else (Path(tempfile.gettempdir()) / "astercore-update")
+        self._lock = threading.Lock()
+        self._state: dict[str, Any] = {"state": "idle", "percent": 0, "message": "",
+                                       "version": "", "available": False, "verified": None,
+                                       "script": "", "error": ""}
+
+    # ---- 状态 ----
+    def status(self) -> dict:
+        with self._lock:
+            out = dict(self._state)
+        out["current"] = self.current
+        return out
+
+    def _set(self, **kw) -> None:
+        with self._lock:
+            self._state.update(kw)
+
+    # ---- 检查 ----
+    def check(self) -> dict:
+        self._set(state="checking", message="正在检查更新…", percent=0, error="")
+        info = check(self.current)
+        if info.get("error"):
+            self._set(state="error", error=info["error"], message="检查更新失败（可能没联网）")
+            return self.status()
+        if not info.get("available"):
+            self._set(state="idle", available=False, message=f"已是最新版本（{self.current}）")
+            return self.status()
+        self._set(state="idle", available=True, version=info.get("version") or "",
+                  message=f"发现新版本 {info.get('version')}", percent=0)
+        return self.status()
+
+    # ---- 下载/校验/暂存（后台） ----
+    def start(self) -> dict:
+        with self._lock:
+            if self._state.get("state") in ("checking", "downloading", "staging"):
+                return dict(self._state)
+            self._state.update({"state": "downloading", "percent": 0, "message": "开始下载…", "error": ""})
+
+        def _job():
+            def _prog(done: int, total: int) -> None:
+                pct = int(done * 100 / total) if total else 0
+                self._set(percent=min(99, pct), message=f"下载中 {pct}%")
+
+            try:
+                out = update_flow(self.current, self.download_dir, self.install_dir, on_progress=_prog)
+            except Exception as e:                    # noqa: BLE001
+                self._set(state="error", error=f"{type(e).__name__}: {e}", message="安装更新失败")
+                return
+            if not out.get("ok"):
+                self._set(state="error", error=out.get("error") or "未知错误",
+                          message="更新准备失败")
+                return
+            if not out.get("available"):
+                self._set(state="idle", percent=100, message="已是最新版本")
+                return
+            self._set(state="done", percent=100, verified=out.get("verified"),
+                      version=out.get("version") or "", script=out.get("script") or "",
+                      message="更新已就绪，重启程序后应用")
+
+        import threading
+        threading.Thread(target=_job, daemon=True, name="astercore-update").start()
+        return self.status()
+

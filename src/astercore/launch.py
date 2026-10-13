@@ -162,8 +162,25 @@ async def amain(args: argparse.Namespace) -> int:
     controller = BotController(mgr, loop_provider=lambda: loop,
                                state_get=lambda: state.current_account,
                                state_set=state.set_current_account)
+    # 更新器两阶段：①启动最早期先看上次更新是否没起来 → 回滚；②面板建好后确认本次启动
+    try:
+        from astercore import updater as _upd
+        from astercore.paths import app_base_dir as _abd
+        if _upd.try_rollback(_abd()):
+            print("[launch] 上次更新未能正常启动，已自动回滚到旧版本")
+    except Exception:                       # noqa: BLE001 更新器不能拖垮启动
+        log.exception("更新回滚检查失败")
+
     panel = ManagerWebPanel(mgr, loop_provider=lambda: loop, app_state=state,
                             bot_controller=controller)
+
+    try:
+        from astercore import updater as _upd2
+        from astercore.paths import app_base_dir as _abd2
+        if _upd2.confirm_boot(_abd2()):
+            print("[launch] 本次启动已确认（清理旧版本目录）")
+    except Exception:                       # noqa: BLE001
+        log.exception("更新确认失败")
     from astercore.rpc import build_hub
     hub = build_hub()
     hub.bind_panel(panel)
@@ -555,6 +572,28 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
         _reg("/api/guide/discover", _g_discover)
     except Exception:                       # noqa: BLE001
         logging.getLogger("astercore.launch").exception("引导 RPC 接口注册失败")
+
+    try:
+        from astercore.web.appapi import _session as _app_session
+
+        _reg("/api/app/update/status", lambda p=None: _app_session().status())
+        _reg("/api/app/update/check", lambda p=None: _app_session().check())
+        _reg("/api/app/update/start", lambda p=None: _app_session().start())
+
+        def _update_apply(p=None):
+            from astercore import updater as _u2
+            stt = _app_session().status()
+            scr = stt.get("script") or ""
+            if stt.get("state") != "done" or not scr:
+                return {"applied": False, "error": "还没有备好更新（先检查并下载）"}
+            if not _u2.apply_now(scr):
+                return {"applied": False, "error": "交接脚本不存在或无法执行"}
+            _quit()                            # 关掉本进程，脚本替换目录后重新拉起
+            return {"applied": True, "hint": "程序将退出并应用更新"}
+
+        _reg("/api/app/update/apply", _update_apply)
+    except Exception:                       # noqa: BLE001
+        logging.getLogger("astercore.launch").exception("更新 RPC 注册失败")
 
     def _reg(path, fn):
         """注册桌面 RPC：返回值统一包成 {ok,data}/{ok,error}，与 HTTP 那份形状一致，

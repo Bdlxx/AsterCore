@@ -25,7 +25,20 @@ def _err(msg: str, code: int = 400):
     return jsonify({"ok": False, "error": msg}), code
 
 
-def add_app_routes(app, controller=None, state=None) -> None:
+_SESSIONS: dict[str, Any] = {}
+
+
+def _session():
+    """更新会话（按安装目录缓存；HTTP 与 RPC 共用同一份状态与进度）"""
+    from astercore import __version__, updater
+    from astercore.paths import app_base_dir
+    base = str(app_base_dir())
+    if base not in _SESSIONS:
+        _SESSIONS[base] = updater.UpdateSession(__version__, base)
+    return _SESSIONS[base]
+
+
+def add_app_routes(app, controller=None, state=None, quit_cb=None) -> None:
     """挂 /api/app/*；controller 为 None 时只提供只读空状态（不假装能启停）"""
     if controller is None and state is None:
         return
@@ -71,6 +84,35 @@ def add_app_routes(app, controller=None, state=None) -> None:
             return _err(f"账号不存在: {aid}", 404)
         controller.set_current_account(aid)
         return _ok(_snap())
+
+    # ---------------- 应用内更新（计划书 §369） ----------------
+    @app.get("/api/app/update/status")
+    def update_status():
+        return _ok(_session().status())
+
+    @app.post("/api/app/update/check")
+    def update_check():
+        return _ok(_session().check())
+
+    @app.post("/api/app/update/start")
+    def update_start():
+        return _ok(_session().start())
+
+    @app.post("/api/app/update/apply")
+    def update_apply():
+        from astercore import updater
+        st = _session().status()
+        script = st.get("script") or ""
+        if st.get("state") != "done" or not script:
+            return _err("还没有备好更新（先检查并下载）", 409)
+        if not updater.apply_now(script):
+            return _err("交接脚本不存在或无法执行", 500)
+        if quit_cb is not None:
+            try:
+                quit_cb()                          # 关掉本进程，让脚本替换目录并重新拉起
+            except Exception:                      # noqa: BLE001
+                log.exception("退出以应用更新失败")
+        return _ok({"applied": True, "hint": "程序将退出并应用更新，稍后会自动重新打开"})
 
     @app.get("/api/app/accounts")
     def app_accounts():
