@@ -281,39 +281,37 @@ def render_status(ctx):
 # 页面内容由后端生成，交互走 data-act（面板的事件委托），事件处理器在 index.html 的
 # PANEL.actions 里，最终打到 /api/guide/*（桌面 file:// 模式下由 Transport 转 RPC）。
 def _guide_page(ctx):
-    comp = ctx.get('guide') or {}
-    key = comp.get('key') or 'lagrange'
-    label = comp.get('label') or '内置协议（Lagrange）'
-    installed = bool(comp.get('installed'))
-    host = comp.get('host') or {}
-    running = bool(host.get('running'))
+    """连接引导（面板内一页）
+
+    用户要求：**引导下载的是 NapCat**（推荐路线）；内置协议由软件自带、不在这里下载。
+    所以本页固定 NapCat，另给一个"内置协议（软件自带）"的说明块。
+    """
+    comp_dir = esc((ctx.get('guide') or {}).get('base_dir') or '')
     return card('🚀 连接引导', f"""
       <div class="cf-help" style="margin-bottom:10px">
-        第一次用一个账号，建议走完这三步：<b>装组件 → 写配置 → 启动扫码</b>，
-        然后把这串连接信息填到「账号」页的表单里（ws 地址 + 令牌）。
+        推荐路线：<b>① 下载安装 NapCat（走官方 QQ 通道，风控最低）→ ② 写配置 → ③ 启动扫码</b>，
+        然后把连接信息填到「账号」页的表单里（ws 地址 + 令牌）。
       </div>
       <div class="cf-form">
-        <div class="cf-field"><label class="cf-label">组件</label>
-          <div><b>{esc(label)}</b>
-            <span class="el-tag {'success' if installed else 'warning'}">
-              {'已安装' if installed else '未安装'}</span>
-            <span class="el-tag {'success' if running else 'info'}">
-              后台进程{'运行中' if running else '未运行'}</span>
-          </div>
-          <div class="cf-help">数据目录：{esc(comp.get('base_dir') or '')}</div></div>
+        <div class="cf-field"><label class="cf-label">NapCat（推荐）</label>
+          <div class="cf-help">组件目录：{esc(comp_dir)}</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-          <button class="btn" data-act="gd-install" data-key="{esc(key)}">① 下载并安装组件</button>
-          <button class="btn" data-act="gd-config" data-key="{esc(key)}">② 写配置（自动端口/令牌）</button>
-          <button class="btn" data-act="gd-host" data-key="{esc(key)}">③ 启动并取二维码</button>
-          <button class="btn btn-default" data-act="gd-stop" data-key="{esc(key)}">停止组件</button>
-          <button class="btn btn-default" data-act="gd-log" data-key="{esc(key)}">看日志</button>
-          <button class="btn btn-default" data-act="gd-refresh" data-key="{esc(key)}">刷新状态</button>
+          <button class="btn" data-act="gd-install" data-key="napcat">① 下载并安装 NapCat</button>
+          <button class="btn" data-act="gd-config" data-key="napcat">② 写 NapCat 配置（自动端口/令牌）</button>
+          <button class="btn" data-act="gd-host" data-key="napcat">③ 启动 NapCat 并取二维码</button>
+          <button class="btn btn-default" data-act="gd-stop" data-key="napcat">停止组件</button>
+          <button class="btn btn-default" data-act="gd-log" data-key="napcat">看日志</button>
+          <button class="btn btn-default" data-act="gd-refresh">刷新状态</button>
         </div>
         <div id="gdOut" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
         <div id="gdCfg" style="margin-top:10px;display:none"></div>
         <div id="gdQR" style="margin-top:10px"></div>
         <pre id="gdLogBox" style="max-height:220px;overflow:auto;font-size:12px;
              background:var(--bg-secondary,#f6f7f9);padding:10px;border-radius:8px;display:none"></pre>
+        <div class="cf-help" style="margin-top:14px">
+          <b>内置协议（Lagrange）由软件自带</b>，不在这里下载：装好本软件即可直接用
+          （面板 → 设置 → 运行方式 → 内部协议）。
+        </div>
       </div>""")
 
 
