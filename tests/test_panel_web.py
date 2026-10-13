@@ -327,7 +327,7 @@ class GuidePageInPanelTest(unittest.TestCase):
         r = self.client.get("/ui/page/guide-page")
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
         html = r.get_json()["data"]["html"]
-        for marker in ("连接引导", "gd-install", "gd-config", "gd-host",
+        for marker in ("连接引导", "gd-open", "gd-config", "gd-host",
                        "NapCat", 'data-key="napcat"', "由软件自带",
                        "gd-create", 'id="gdQQ"', "一键建好并启动"):
             self.assertIn(marker, html)
@@ -564,4 +564,39 @@ class AccountsPageLayoutTest(unittest.TestCase):
     def test_index_handles_dialog_actions(self):
         for act in ("acct-add", "acct-edit", "acct-dlg-cancel"):
             self.assertIn(f"'{act}':", self.index, f"{act} 处理器要在")
+
+
+class GuideOpenDownloadTest(unittest.TestCase):
+    """引导页第①步只做引导：点了用浏览器打开官方下载页，不在应用内下载"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountManager
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        cls.panel = ManagerWebPanel(AccountManager(accounts_dir=base / "accounts"),
+                                    lambda: None, app_state=cls.state)
+        cls.client = cls.panel.app.test_client()
+        cls.html = cls.client.get("/ui/page/guide-page").get_json()["data"]["html"]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_step_one_opens_browser(self):
+        self.assertIn('data-act="gd-open"', self.html)
+        self.assertIn("github.com", self.html, "要露出官方下载页链接")
+        self.assertNotIn('data-act="gd-install"', self.html, "第①步不再在应用内下载")
+
+    def test_open_url_endpoint_guards_scheme(self):
+        self.assertEqual(self.client.post("/api/app/open-url", json={"url": "file:///etc/passwd"}).status_code, 400)
+        self.assertEqual(self.client.post("/api/app/open-url", json={"url": "javascript:alert(1)"}).status_code, 400)
 

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Callable
 
 log = logging.getLogger("astercore.web.appapi")
@@ -84,6 +85,21 @@ def add_app_routes(app, controller=None, state=None, quit_cb=None) -> None:
             return _err(f"账号不存在: {aid}", 404)
         controller.set_current_account(aid)
         return _ok(_snap())
+
+    # ---------------- 打开外部链接（引导页"去官网下载"用） ----------------
+    @app.post("/api/app/open-url")
+    def app_open_url():
+        import webbrowser
+        from flask import request
+        d = request.get_json(silent=True) or {}
+        url = str(d.get("url") or "").strip()
+        if not re.match(r"^https?://", url):
+            return _err("只允许 http/https 链接")
+        try:
+            ok = webbrowser.open(url, new=2)
+        except Exception as e:                      # noqa: BLE001
+            return _err(f"打开浏览器失败：{e}", 500)
+        return _ok({"opened": bool(ok), "url": url})
 
     # ---------------- 应用内更新（计划书 §369） ----------------
     @app.get("/api/app/update/status")

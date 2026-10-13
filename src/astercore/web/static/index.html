@@ -520,6 +520,15 @@ PANEL.hooks = {
       if (r && r.ok) { PANEL.renderPage(); }
       return { ok: true, message: (r && r.ok) ? '状态已刷新' : ((r && r.error) || '刷新失败') };
     },
+    'gd-open': async function (el) {
+      const url = el.getAttribute('data-url') || '';
+      const r = await post('/api/app/open-url', { url: url });
+      if (!r || !r.ok) {
+        try { window.open(url, '_blank'); } catch (e) { /* 兜底失败就只提示 */ }
+        return { ok: true, message: '已尝试用浏览器打开：' + url };
+      }
+      return { ok: true, message: '已在浏览器打开下载页，装好后回来点第②步' };
+    },
     'gd-install': async function (el) {
       const key = el.getAttribute('data-key') || 'lagrange';
       const r = await post('/api/guide/install', { key: key });

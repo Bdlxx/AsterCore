@@ -617,6 +617,17 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
                 return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
         hub.register(path, _h)
 
+    def _open_url(p=None):
+        """引导页第①步"去官网下载"：用系统浏览器打开链接（只允许 http/https）"""
+        import re as _re
+        import webbrowser as _wb
+        url = str((p or {}).get("url") or "").strip()
+        if not _re.match(r"^https?://", url):
+            raise ValueError("只允许 http/https 链接")
+        return {"opened": bool(_wb.open(url, new=2)), "url": url}
+
+    _reg("/api/app/open-url", _open_url)
+
     hub.register("app.quit", lambda p: (_quit(), {"ok": True})[1])
     hub.register("window.hide", lambda p: (_hide(), {"ok": True})[1])
     hub.register("app.info", lambda p: {

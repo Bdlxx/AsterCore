@@ -330,12 +330,15 @@ def _guide_page(ctx):
     comp_dir = esc((ctx.get('guide') or {}).get('base_dir') or '')
     return card('🚀 连接引导', f"""
       <div class="cf-help" style="margin-bottom:10px">
-        推荐路线：<b>① 下载安装 NapCat</b>（走官方 QQ 通道，风控最低）→ <b>② 写配置</b>
-        → <b>③ 启动扫码</b>，然后把连接信息填到「账号」页（ws 地址 + 令牌）。
+        推荐路线：<b>① 去官网下载并安装 NapCat</b>（走官方 QQ 通道，风控最低）
+        → <b>② 写配置</b> → <b>③ 启动扫码</b>，然后把连接信息填到「账号」页（ws 地址 + 令牌）。
+        <div style="margin-top:4px">第①步只做引导（不在应用里下载）：点击会用**浏览器**打开官方下载页
+        <a href="https://github.com/NapNeko/NapCatQQ/releases/latest" target="_blank" rel="noreferrer">https://github.com/NapNeko/NapCatQQ/releases/latest</a>，
+        装完回来点第②步即可。</div>
       </div>
       <div class="cf-form">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-          <button class="btn" data-act="gd-install" data-key="napcat">① 下载并安装 NapCat</button>
+          <button class="btn" data-act="gd-open" data-url="https://github.com/NapNeko/NapCatQQ/releases/latest">① 去官网下载 NapCat</button>
           <button class="btn" data-act="gd-config" data-key="napcat">② 写 NapCat 配置（自动端口/令牌）</button>
           <button class="btn" data-act="gd-host" data-key="napcat">③ 启动 NapCat 并取二维码</button>
         </div>
