@@ -650,6 +650,25 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
         return {"opened": bool(_wb.open(url, new=2)), "url": url}
 
     _reg_rpc(hub, "/api/app/open-url", _open_url)
+    def _window_ctl(p=None):
+        """自绘标题栏三按钮：左上=最小化 / 中=收起托盘 / 右=退出程序"""
+        action = str((p or {}).get("action") or "").strip()
+        sh = holder.get("shell")
+        if action == "minimize":
+            return {"done": bool(sh and sh.minimize())}
+        if action == "maximize":
+            return {"done": bool(sh and sh.toggle_maximize())}
+        if action == "hide":
+            if sh is not None:
+                sh._hide_window()
+            return {"done": True}
+        if action == "quit":
+            if sh is not None:
+                sh.quit()
+            return {"done": True}
+        raise ValueError(f"未知窗口操作: {action or '(空)'}")
+
+    _reg_rpc(hub, "/api/app/window", _window_ctl)
     # 账号操作（**固定路径**，RPC 只认固定名）：新建/保存/删除/启停
     try:
         from astercore.core.manager import AccountConfig as _ACct2

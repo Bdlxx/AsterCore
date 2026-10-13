@@ -148,6 +148,8 @@ class ShellApp:
                     self.title, self.target(), js_api=js_api,
                     width=self.width, height=self.height, min_size=(900, 600),
                     confirm_close=False,     # 自己拦截关闭（手册 §1.1）
+                    frameless=True,          # 无边框：标题栏由面板自绘三按钮
+                                             # （左=最小化 / 中=收起托盘 / 右=退出程序）
                 )
                 try:
                     self._window.events.closing += self._on_closing
@@ -216,6 +218,33 @@ class ShellApp:
                 self._window.destroy()
         except Exception as e:                     # noqa: BLE001
             log.warning("销毁窗口失败: %s", e)
+
+    def minimize(self) -> bool:
+        """最小化到任务栏（自绘三按钮里最左边那个）"""
+        try:
+            if self._window is not None and hasattr(self._window, "minimize"):
+                self._window.minimize()
+                return True
+        except Exception as e:                     # noqa: BLE001
+            log.debug("最小化失败: %s", e)
+        return False
+
+    def toggle_maximize(self) -> bool:
+        """无边框窗口没有系统最大化按钮，用双击拖动区/自绘按钮触发"""
+        try:
+            win = self._window
+            if win is None:
+                return False
+            if getattr(win, "maximized", False) or getattr(self, "_maxed", False):
+                (win.restore() if hasattr(win, "restore") else win.maximize)()
+                self._maxed = False
+            else:
+                win.maximize()
+                self._maxed = True
+            return True
+        except Exception as e:                     # noqa: BLE001
+            log.debug("最大化切换失败: %s", e)
+            return False
 
     def _hide_window(self) -> None:
         try:

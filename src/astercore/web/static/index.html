@@ -365,6 +365,18 @@ PANEL.hooks = {
   },
   groupSelect: function () { return { groups: PANEL.hooks.groupCache || [], error: PANEL.hooks.groupErr || '' }; },
   actions: {
+    'win-min': async function () {
+      await post('/api/app/window', { action: 'minimize' });
+      return { ok: true, message: '已最小化' };
+    },
+    'win-hide': async function () {
+      await post('/api/app/window', { action: 'hide' });
+      return { ok: true, message: '已收起到托盘（点托盘图标可再打开）' };
+    },
+    'win-quit': async function () {
+      await post('/api/app/window', { action: 'quit' });
+      return { ok: true, message: '正在退出程序' };
+    },
     'acct-add': function () {
       PANEL.hooks._editing = null;
       const put = function (id, v) { const el = document.getElementById(id); if (el) { el.value = v; } };
@@ -677,6 +689,11 @@ try {
   <button id="dbRestart" class="db-btn ghost">重启机器人</button>
   <button id="dbSettings" class="db-btn ghost">设置</button>
   <button id="dbExit" class="db-btn ghost">退出</button>
+  <span class="db-sep"></span>
+  <!-- 自绘窗口三按钮（窗口已无边框）：左=最小化 中=收起托盘 右=退出程序 -->
+  <button id="dbWinMin" class="db-winbtn" title="最小化窗口" aria-label="最小化窗口">&#8211;</button>
+  <button id="dbWinHide" class="db-winbtn" title="关闭窗口（保留托盘，随时点托盘图标再打开）" aria-label="关闭窗口保留托盘">&#9723;</button>
+  <button id="dbWinQuit" class="db-winbtn danger" title="退出程序" aria-label="退出程序">&#10005;</button>
 </div>
 <div id="acctOverlay" style="display:none">
   <div class="acct-panel"><div class="acct-title">账号</div><div class="acct-list"></div></div>
