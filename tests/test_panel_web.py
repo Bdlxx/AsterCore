@@ -256,3 +256,49 @@ class SettingsPageRouteTest(unittest.TestCase):
     def test_unknown_page_still_404(self):
         self.assertEqual(self.client.get("/ui/page/nope").status_code, 404)
 
+
+class GuidePageInPanelTest(unittest.TestCase):
+    """引导改成面板内一页（用户要求：建账号时才弹，不在首次启动拦人）"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountManager
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        cls.panel = ManagerWebPanel(AccountManager(accounts_dir=base / "accounts"),
+                                   lambda: None, app_state=cls.state)
+        cls.client = cls.panel.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_guide_page_in_panel(self):
+        from astercore.web import ui_pages
+        self.assertIn("guide-page", ui_pages.PAGES)
+        r = self.client.get("/ui/page/guide-page")
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
+        html = r.get_json()["data"]["html"]
+        for marker in ("连接引导", "gd-install", "gd-config", "gd-host"):
+            self.assertIn(marker, html)
+
+    def test_accounts_page_has_guide_entry(self):
+        html = self.client.get("/ui/page/accounts").get_json()["data"]["html"]
+        self.assertIn('data-open="guide-page"', html, "新建账号要走引导入口")
+
+    def test_no_startup_gating_in_entry_url(self):
+        """首次启动不再强制引导页（用户明确要求）"""
+        import inspect
+
+        from astercore import launch
+        src = inspect.getsource(launch._entry_url)
+        self.assertNotIn("/setup", src)
+

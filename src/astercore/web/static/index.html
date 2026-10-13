@@ -152,6 +152,7 @@ PANEL.nav = [
   { id: 'accounts', icon: '👥', label: '账号', group: '管理', sub: true },
   { id: 'config', icon: '⚙️', label: '插件配置', group: '管理', sub: true },
   { id: 'logs', icon: '📋', label: '运行日志', group: '管理' },
+  { id: 'guide-page', icon: '🚀', label: '连接引导', group: '管理' },
   { id: 'settings-runtime', icon: '🛠️', label: '运行方式', group: '设置' },
   { id: 'settings-auth', icon: '🔒', label: '安全设置', group: '设置' },
   { id: 'settings-page', icon: '🖥️', label: '页面与端口', group: '设置' }
@@ -361,6 +362,53 @@ PANEL.hooks = {
   },
   groupSelect: function () { return { groups: PANEL.hooks.groupCache || [], error: PANEL.hooks.groupErr || '' }; },
   actions: {
+    'gd-refresh': async function () {
+      const r = await post('/api/guide/status', {});
+      const box = document.getElementById('gdOut');
+      if (box) { box.textContent = (r && r.ok) ? '状态已刷新（重新打开本页可看到最新安装/运行态）' : ((r && r.error) || '刷新失败'); }
+      if (r && r.ok) { PANEL.renderPage(); }
+    },
+    'gd-install': async function (el) {
+      const key = el.getAttribute('data-key') || 'lagrange';
+      const r = await post('/api/guide/install', { key: key });
+      formMsg('gdOut', (r && r.ok) ? '已开始后台下载安装，进度看「看日志」' : ((r && r.error) || '安装失败'), !(r && r.ok));
+    },
+    'gd-config': async function (el) {
+      const key = el.getAttribute('data-key') || 'lagrange';
+      const r = await post('/api/guide/config', { key: key });
+      if (!r || !r.ok) { formMsg('gdOut', (r && r.error) || '写配置失败', true); return; }
+      const d = r.data || {};
+      const box = document.getElementById('gdCfg');
+      if (box) {
+        box.style.display = 'block';
+        box.innerHTML = '<div class="cf-field"><label class="cf-label">把这串填到账号表单</label>'
+          + '<input type="text" readonly value="' + PANEL.esc(d.ws_url || '') + '">'
+          + '<input type="text" readonly value="' + PANEL.esc(d.access_token || '') + '" style="margin-top:6px">'
+          + '<div class="cf-help">ws 地址 + 令牌；配置文件：' + PANEL.esc(d.path || '') + '</div></div>';
+      }
+      formMsg('gdOut', '配置已写入（端口与令牌已自动生成）');
+    },
+    'gd-host': async function (el) {
+      const key = el.getAttribute('data-key') || 'lagrange';
+      const r = await post('/api/guide/host', { key: key });
+      if (!r || !r.ok) { formMsg('gdOut', (r && r.error) || '启动失败', true); return; }
+      const d = r.data || {};
+      formMsg('gdOut', d.ok ? ('组件已启动' + (d.msg ? '：' + d.msg : '')) : ('启动失败：' + (d.msg || '')));
+      const qr = d.qr || {};
+      const box = document.getElementById('gdQR');
+      if (box && qr.data_url) { box.innerHTML = '<img alt="二维码" src="' + qr.data_url + '" style="width:220px">'; }
+    },
+    'gd-stop': async function (el) {
+      const key = el.getAttribute('data-key') || 'lagrange';
+      const r = await post('/api/guide/stop', { key: key });
+      formMsg('gdOut', (r && r.ok) ? '组件已停止' : ((r && r.error) || '停止失败'), !(r && r.ok));
+    },
+    'gd-log': async function (el) {
+      const key = el.getAttribute('data-key') || 'lagrange';
+      const r = await post('/api/guide/log', { key: key, limit: 60 });
+      const box = document.getElementById('gdLogBox');
+      if (box) { box.style.display = 'block'; box.textContent = (r && r.ok) ? (((r.data || {}).lines || []).join('\n') || '暂无日志') : ((r && r.error) || '取日志失败'); }
+    },
     start: async function (el) { return post(acctUrl('/start'), undefined); },
     stop: async function (el) { return post(acctUrl('/stop'), undefined); },
     'reload-plugins': async function (el) { return post(acctUrl('/plugins/reload')); },

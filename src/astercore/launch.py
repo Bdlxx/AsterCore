@@ -431,19 +431,19 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
                 return {"ok": bool(ok), "msg": str(msg), "state": _snap()}
             return _h
 
-        hub.register("/api/app/state", _snap)
-        hub.register("/api/app/accounts", _accounts)
+        _reg("/api/app/state", lambda p=None: _snap())
+        _reg("/api/app/accounts", lambda p=None: _accounts())
         if controller is not None:
-            hub.register("/api/app/start", _act(controller.start))
-            hub.register("/api/app/stop", _act(controller.stop))
-            hub.register("/api/app/restart", _act(controller.restart))
+            _reg("/api/app/start", _act(controller.start))
+            _reg("/api/app/stop", _act(controller.stop))
+            _reg("/api/app/restart", _act(controller.restart))
 
         def _current(p=None):
             aid = str((p or {}).get("aid") or "")
             if controller is not None and aid:
                 controller.set_current_account(aid)
             return _snap()
-        hub.register("/api/app/account-current", _current)
+        _reg("/api/app/account-current", _current)
 
         def _setup_state(p=None):
             port = _SP_DEFAULT
@@ -481,10 +481,90 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
                 return {"ok": True, "page_mode": mode, "port": cfg["port"], "restart_needed": True}
             return {"ok": True, "page_mode": mode, "restart_needed": True}
 
-        hub.register("/api/setup/state", _setup_state)
-        hub.register("/api/setup/page", _setup_page)
+        _reg("/api/setup/state", _setup_state)
+        _reg("/api/setup/page", _setup_page)
     except Exception:                       # noqa: BLE001 注册失败不能拖垮启动
         logging.getLogger("astercore.launch").exception("桌面 RPC 接口注册失败")
+
+    # 面板内「连接引导」页用到的端点：file:// 模式下 fetch 会被 Transport 转成 hub 方法
+    try:
+        import threading as _threading
+
+        from astercore import components as _C
+        from astercore.paths import app_base_dir as _base
+
+        def _g_status(p=None):
+            base = _base()
+            return {"base_dir": str(base),
+                    "components": {k: _C.host_status(c, base) for k, c in _C.COMPONENTS.items()}}
+
+        def _g_install(p=None):
+            key = str((p or {}).get("key") or "")
+            comp = _C.get_component(key)
+            base = _base()
+            _threading.Thread(target=lambda: _C.provision(comp, base), daemon=True).start()
+            return {"started": True}
+
+        def _g_config(p=None):
+            p = p or {}
+            comp = _C.get_component(str(p.get("key") or ""))
+            base = _base()
+            ws = int(p.get("ws_port") or _C.free_port(3001))
+            hp = int(p.get("http_port") or _C.free_port(3000, avoid=[ws]))
+            token = str(p.get("token") or _C.random_token())
+            qq = str(p.get("qq") or "default")
+            if comp.key == "napcat":
+                path = _C.write_napcat_config(base, qq, ws, hp, token)
+            else:
+                path = _C.write_lagrange_config(base, ws, token, http_port=hp,
+                                                uin=int(qq) if qq.isdigit() else None)
+            return {"path": str(path), "ws_url": "ws://127.0.0.1:%d" % ws,
+                    "http_url": "http://127.0.0.1:%d" % hp, "access_token": token, "qq": qq}
+
+        def _g_host(p=None):
+            comp = _C.get_component(str((p or {}).get("key") or "lagrange"))
+            base = _base()
+            ok, msg = _C.host_start(comp, base)
+            return {"ok": ok, "msg": msg, "status": _C.host_status(comp, base),
+                    "qr": _C.qr_code(base, comp.key)}
+
+        def _g_stop(p=None):
+            comp = _C.get_component(str((p or {}).get("key") or "lagrange"))
+            base = _base()
+            ok, msg = _C.host_stop(comp, base)
+            return {"ok": ok, "msg": msg}
+
+        def _g_qr(p=None):
+            key = str((p or {}).get("key") or "lagrange")
+            return _C.qr_code(_base(), key)
+
+        def _g_log(p=None):
+            key = str((p or {}).get("key") or "lagrange")
+            return {"lines": _C.tail_log(_base(), key, limit=int((p or {}).get("limit") or 40))}
+
+        def _g_discover(p=None):
+            return {"found": _C.discover_local(_base())}
+
+        _reg("/api/guide/status", _g_status)
+        _reg("/api/guide/install", _g_install)
+        _reg("/api/guide/config", _g_config)
+        _reg("/api/guide/host", _g_host)
+        _reg("/api/guide/stop", _g_stop)
+        _reg("/api/guide/qr", _g_qr)
+        _reg("/api/guide/log", _g_log)
+        _reg("/api/guide/discover", _g_discover)
+    except Exception:                       # noqa: BLE001
+        logging.getLogger("astercore.launch").exception("引导 RPC 接口注册失败")
+
+    def _reg(path, fn):
+        """注册桌面 RPC：返回值统一包成 {ok,data}/{ok,error}，与 HTTP 那份形状一致，
+        这样共用面板的 fetch 代码在两种模式下都能读 r.ok / r.data。"""
+        def _h(p=None):
+            try:
+                return {"ok": True, "data": fn(p)}
+            except Exception as e:                  # noqa: BLE001
+                return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+        hub.register(path, _h)
 
     hub.register("app.quit", lambda p: (_quit(), {"ok": True})[1])
     hub.register("window.hide", lambda p: (_hide(), {"ok": True})[1])
@@ -529,18 +609,10 @@ def _entry_url(http_url: str, state) -> str:
     try:
         from astercore import components as C
         from astercore.paths import app_base_dir
-        base = http_url.rstrip("/")
-        # ① 未完成首启引导 → 只显示引导页（规格 §三）
-        if getattr(state, "needs_wizard", lambda: False)():
-            return base + "/setup"
-        # ② "稍后选择"：不催装组件，直接进主界面
-        if str(state.data.get("setup_mode") or "") == "later":
-            return http_url
-        # ③ 已完成引导但组件还没装 → 落到连接引导页
-        key = {"napcat": "napcat", "lagrange": "lagrange"}.get(
-            getattr(state, "backend_mode", "") or "")
-        if key and not C.is_installed(C.get_component(key), app_base_dir()):
-            return base + "/guide"
+        # 用户明确：**引导不在首次启动拦人**，而是在"新建账号"时通过面板内的
+        # 「连接引导」页走完（见 ui_pages 的 guide-page 与账号页入口）。
+        # 所以这里不再做任何启动拦截，直接进主界面。
+        _ = (C, app_base_dir)
     except Exception:                       # noqa: BLE001 引导入口不能拖垮启动
         pass
     return http_url
