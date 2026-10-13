@@ -157,6 +157,11 @@ def main() -> int:
                                        shell["content"], shell["bar"], shell["toast"], shell["modal"]]), shell)
             check("图标精灵已水合", shell["icons"] >= 8, f'{shell["icons"]} 个')
             check("设计令牌已生效（与 Linux 同源）", bool(shell["tokens"]), shell["tokens"])
+            # 顶栏状态胶囊：账号在跑就必须显示"运行中"。读错信封层时会恒为
+            # "已停止/连接失败"，而页面本身不报错 —— 属于静默失效，必须显式断言。
+            check("顶栏状态胶囊反映真实运行状态",
+                  "运行中" in (page.text_content("#statusTag") or ""),
+                  (page.text_content("#statusTag") or "").strip())
 
             print("\n[2] 侧边栏导航与六个页面")
             nav = page.eval_on_selector_all(".nav-item", "els=>els.map(e=>e.textContent.trim())")
@@ -231,8 +236,11 @@ def main() -> int:
             print("\n[5] 运行日志页（结构化条目 → 文本行）")
             page.evaluate("() => PANEL.goPage('logs')")
             page.wait_for_timeout(2000)
-            text = page.text_content("#logViewer") or ""
-            check("日志查看器有内容", len(text.strip()) > 0, text.strip()[:80])
+            text = (page.text_content("#logViewer") or "").strip()
+            # 占位文案不算内容：读错信封层时这里恒为"暂无日志"，旧检查照样通过
+            check("日志查看器显示真实日志行", bool(text) and "暂无日志" not in text, text[:80])
+            check("日志行数统计已回填", "共 " in (page.text_content("#logTotalInfo") or ""),
+                  (page.text_content("#logTotalInfo") or "").strip())
             check("行数下拉可用", page.eval_on_selector("#logLinesSel", "e=>!!e"))
 
             print("\n[6] 运行方式 / 安全设置可保存")

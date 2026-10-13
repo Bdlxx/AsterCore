@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 INDEX = ROOT / "src" / "astercore" / "web" / "static" / "index.html"
+PANEL_JS = ROOT / "src" / "astercore" / "web" / "static" / "panel.js"
 
 _DECL_RE = re.compile(
     r"^\s*(?:(?:async\s+)?function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=)",
@@ -92,6 +93,33 @@ class PanelStaticTest(unittest.TestCase):
         self.assertEqual(js.count("localStorage."), 2,
                          "裸 localStorage 访问只应出现在 store 的探测与实现里")
         self.assertIn("store.getItem('ac_token')", js, "业务代码应走带兜底的 store")
+
+
+class SharedPanelEnvelopeTest(unittest.TestCase):
+    """共用外壳（panel.js）与各端信封层的接线。
+
+    背景：Linux 端接口返回扁平 JSON，桌面端返回 {ok,data}。共用外壳若只认扁平层，
+    桌面端会静默失效：「运行日志」恒为"暂无日志"、顶栏恒为"已停止/连接失败" ——
+    页面不报错，只有肉眼能看出来，所以在这里钉住。
+    """
+
+    @staticmethod
+    def _func_body(name: str) -> str:
+        js = PANEL_JS.read_text(encoding="utf-8")
+        i = js.index("function " + name)
+        return js[i:js.index("\n}", i)]
+
+    def test_log_viewer_uses_end_adapter(self):
+        """日志正文形状两端不同：提供 hooks.fetchLogs 的端必须走它（结构化条目转文本行）"""
+        body = self._func_body("loadLogs")
+        self.assertIn("P.hooks.fetchLogs", body, "运行日志必须走各端适配钩子")
+        self.assertIn("typeof d.data === 'object'", body, "同时要认 {ok,data} 信封")
+
+    def test_header_status_handles_no_account_and_envelope(self):
+        body = self._func_body("refreshHeaderStatus")
+        self.assertIn("typeof d.data === 'object'", body, "要认 {ok,data} 信封")
+        self.assertIn("if (!url)", body,
+                      "没有当前账号时 headerStatus() 返回 null，不能直接丢给 api()")
 
 
 class PanelApiSmokeTest(unittest.TestCase):
