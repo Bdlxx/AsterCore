@@ -175,6 +175,12 @@ class AppIconTest(unittest.TestCase):
         self.assertGreater(ico.stat().st_size, 10_000)
         self.assertEqual(ico.read_bytes()[:4], b"\x00\x00\x01\x00", "必须是合法 .ico（有 ICONDIR 头）")
 
+    def test_spec_is_valid_python(self):
+        """.spec 就是 Python 脚本：插 icon= 时我就制造过 positional-after-keyword 语法错误"""
+        import ast
+        spec = (self.root / "pack" / "astercore.spec").read_text(encoding="utf-8")
+        ast.parse(spec)          # 语法不过直接失败
+
     def test_spec_sets_icon_and_bundles_it(self):
         spec = (self.root / "pack" / "astercore.spec").read_text(encoding="utf-8")
         self.assertIn("_ICON", spec)
