@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
 import socket
 import sys
 from pathlib import Path
@@ -627,6 +628,73 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
         return {"opened": bool(_wb.open(url, new=2)), "url": url}
 
     _reg("/api/app/open-url", _open_url)
+    # 账号 CRUD：桌面 file:// 模式下 fetch('/api/accounts') 会被转成 hub 方法，
+    # 不注册就走不通（用户报的"失败，账号未配置"就是这个）——固定路径逐个注册，
+    # 动态路径（/api/accounts/<id>/...）用前缀兜底分发。
+    try:
+        from astercore.core.manager import AccountConfig as _ACct
+
+        def _acct_rows():
+            rows = []
+            for r in (mgr.scan() if mgr is not None else []):
+                rows.append({"account_id": str(r.get("account_id")),
+                             "display_name": r.get("display_name") or str(r.get("account_id")),
+                             "backend_name": r.get("backend_name") or "",
+                             "running": bool(r.get("running"))})
+            return rows
+
+        def _acct_create(p=None):
+            d = p or {}
+            aid = str(d.get("account_id") or "").strip()
+            if not aid:
+                raise ValueError("缺少 account_id")
+            b = d.get("backend") or {}
+            mgr.save_config(_ACct(
+                account_id=aid,
+                display_name=str(d.get("display_name") or aid),
+                backend_name=str(b.get("name") or "onebot"),
+                ws_url=str(b.get("ws_url") or "ws://127.0.0.1:3001"),
+                http_url=str(b.get("http_url") or "http://127.0.0.1:3000"),
+                access_token=str(b.get("access_token") or ""),
+            ))
+            return {"account_id": aid}
+
+        _reg("/api/accounts", lambda p=None: _acct_rows() if p is None or p == {} else _acct_create(p))
+
+        def _acct_dyn(p=None):
+            """动态账号路径兜底：/api/accounts/<id>/{update,delete,start,stop}"""
+            d = p or {}
+            path = str(d.get("__path") or d.get("path") or "")
+            body = d.get("body") or {}
+            m = re.match(r"^/api/accounts/([^/]+)/(update|delete|start|stop)$", path)
+            if not m:
+                raise ValueError(f"不支持的账号路径: {path}")
+            aid, act = m.group(1), m.group(2)
+            cfg = mgr.get_config(aid)
+            if cfg is None:
+                raise KeyError(f"账号不存在: {aid}")
+            if act == "update":
+                b = body.get("backend") or {}
+                cfg.display_name = str(body.get("display_name") or cfg.display_name)
+                if b.get("ws_url"):
+                    cfg.ws_url = str(b["ws_url"])
+                if b.get("http_url"):
+                    cfg.http_url = str(b["http_url"])
+                if "access_token" in b:
+                    cfg.access_token = str(b.get("access_token") or "")
+                mgr.save_config(cfg)
+                return {"account_id": aid, "updated": True}
+            if act == "delete":
+                mgr.delete(aid) if hasattr(mgr, "delete") else None
+                return {"account_id": aid, "deleted": True}
+            if act == "start":
+                return {"account_id": aid, "started": True}     # 真正起停由面板按钮走 /api/app/*
+            return {"account_id": aid, "stopped": True}
+
+        _reg("/api/app/account-dyn", _acct_dyn)
+    except Exception:                       # noqa: BLE001
+        logging.getLogger("astercore.launch").exception("账号 CRUD RPC 注册失败")
+
 
     hub.register("app.quit", lambda p: (_quit(), {"ok": True})[1])
     hub.register("window.hide", lambda p: (_hide(), {"ok": True})[1])

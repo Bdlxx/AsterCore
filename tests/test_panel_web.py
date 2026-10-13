@@ -600,3 +600,51 @@ class GuideOpenDownloadTest(unittest.TestCase):
         self.assertEqual(self.client.post("/api/app/open-url", json={"url": "file:///etc/passwd"}).status_code, 400)
         self.assertEqual(self.client.post("/api/app/open-url", json={"url": "javascript:alert(1)"}).status_code, 400)
 
+
+class GuideInstallPathTest(unittest.TestCase):
+    """引导页要明确告诉用户组件装到哪个目录（一步不落地讲清）"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountManager
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        cls.panel = ManagerWebPanel(AccountManager(accounts_dir=base / "accounts"),
+                                    lambda: None, app_state=cls.state)
+        cls.html = cls.panel.app.test_client().get("/ui/page/guide-page").get_json()["data"]["html"]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_shows_component_dir(self):
+        self.assertIn("components", self.html)
+        self.assertIn("napcat", self.html.lower())
+        self.assertIn("第①步要装到哪", self.html)
+
+    def test_step_by_step(self):
+        for marker in ("去官网下载", "解压", "NapCatWinBootMain.exe", "② 写 NapCat 配置"):
+            self.assertIn(marker, self.html, f"逐步说明要含 {marker}")
+
+
+class ToastAboveModalTest(unittest.TestCase):
+    """提示必须在弹窗之上（弹窗 z-index 10000，提示原来 9999 被盖住）"""
+
+    def test_toast_zindex_higher(self):
+        css = (Path(__file__).resolve().parent.parent / "src" / "astercore" /
+               "web" / "static" / "panel.css").read_text(encoding="utf-8")
+        toast = [l for l in css.splitlines() if l.startswith(".toast{")]
+        modal = [l for l in css.splitlines() if l.startswith(".ui-modal{")]
+        self.assertTrue(toast and modal)
+        tz = int(toast[0].split("z-index:")[1].split(";")[0])
+        mz = int(modal[0].split("z-index:")[1].split(";")[0])
+        self.assertGreater(tz, mz, "提示层级必须高于弹窗")
+

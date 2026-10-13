@@ -327,7 +327,14 @@ def _guide_page(ctx):
     用户要求：**页面主视线只展示 NapCat 三步安装引导**；其余（停止组件/看日志/刷新状态、
     一键建账号、内置协议说明）收进「更多操作」，需要时再展开。
     """
-    comp_dir = esc((ctx.get('guide') or {}).get('base_dir') or '')
+    _base = (ctx.get('guide') or {}).get('base_dir') or ''
+    try:
+        from astercore import components as _C
+        from astercore.paths import app_base_dir as _abd
+        _nap = _C.component_dir(_abd(), 'napcat')
+    except Exception:                                  # noqa: BLE001
+        _nap = None
+    comp_dir = esc(str(_nap) if _nap else (str(_base) + r'\components\napcat'))
     return card('🚀 连接引导', f"""
       <div class="cf-help" style="margin-bottom:10px">
         推荐路线：<b>① 去官网下载并安装 NapCat</b>（走官方 QQ 通道，风控最低）
@@ -341,6 +348,16 @@ def _guide_page(ctx):
           <button class="btn" data-act="gd-open" data-url="https://github.com/NapNeko/NapCatQQ/releases/latest">① 去官网下载 NapCat</button>
           <button class="btn" data-act="gd-config" data-key="napcat">② 写 NapCat 配置（自动端口/令牌）</button>
           <button class="btn" data-act="gd-host" data-key="napcat">③ 启动 NapCat 并取二维码</button>
+        </div>
+        <div class="cf-help" style="margin-top:10px;line-height:1.9">
+          <b>第①步要装到哪</b>（下面就是本软件认的组件目录，装别的目录它找不到）：<br>
+          <code style="user-select:all">{comp_dir}</code><br>
+          <b>一步步来</b>：<br>
+          1. 点上面「① 去官网下载 NapCat」，浏览器会打开官方下载页；<br>
+          2. 下载 Windows 版压缩包（<code>NapCat.Shell.Windows*.zip</code>）；<br>
+          3. 把压缩包**解压**，将其中的内容放进上面那个目录（没有就自己建）；
+          目录里应能看到 <code>NapCatWinBootMain.exe</code> 或 <code>napcat*.exe</code>；<br>
+          4. 回到本页点「② 写 NapCat 配置」→「③ 启动 NapCat 并取二维码」。
         </div>
         <div id="gdOut" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
         <div id="gdCfg" style="margin-top:10px;display:none"></div>
