@@ -562,6 +562,17 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
         def _g_discover(p=None):
             return {"found": _C.discover_local(_base())}
 
+        def _guide_create_account(p=None):
+            """一键建账号：复用 HTTP 路由那份实现（guide_api），避免写第二份逻辑"""
+            api = getattr(panel, "guide_api", None) or {}
+            fn = api.get("create_account")
+            if fn is None:
+                return {"ok": False, "error": "当前环境不支持一键建账号"}
+            ok, payload = fn(p or {})
+            if ok:
+                return payload
+            raise RuntimeError(str(payload))        # _reg 会包成 {ok:false,error}
+
         _reg("/api/guide/status", _g_status)
         _reg("/api/guide/install", _g_install)
         _reg("/api/guide/config", _g_config)
@@ -570,6 +581,7 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
         _reg("/api/guide/qr", _g_qr)
         _reg("/api/guide/log", _g_log)
         _reg("/api/guide/discover", _g_discover)
+        _reg("/api/guide/account", _guide_create_account)
     except Exception:                       # noqa: BLE001
         logging.getLogger("astercore.launch").exception("引导 RPC 接口注册失败")
 

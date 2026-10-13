@@ -36,6 +36,9 @@ def _err(msg: str, code: int = 400):
     return jsonify({"ok": False, "error": msg}), code
 
 
+    # 供桌面 RPC 复用的接口（file:// 模式下 fetch 会被 Transport 转成 hub 方法）
+    return {"create_account": _create_account_impl}
+
 def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
                      state: Any | None = None,
                      manager: Any | None = None,
@@ -228,22 +231,25 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
             })
         return _ok({"accounts": out, "backends": _BACKENDS})
 
-    @app.post("/api/guide/account")
-    def guide_create_account():
-        """一键建账号：写组件配置（端口/token 自动、与账号一致）→ 写 backend.json → 启动"""
+    def _create_account_impl(b: dict[str, Any]) -> tuple[bool, Any]:
+        """一键建账号（**可复用实现**：HTTP 路由与桌面 RPC 共用同一份逻辑）
+
+        写组件配置（端口/token 自动、与账号一致）→ 写 backend.json → 按需启动。
+        返回 (ok, payload 或 错误文案)。
+        """
+        b = b or {}
         if manager is None:
-            return _err("当前面板没有账号管理器", 501)
-        b = _body()
+            return False, "当前面板没有账号管理器"
         aid = str(b.get("account_id") or "").strip()
         if not aid:
-            return _err("缺 account_id（QQ 号）")
+            return False, "缺 account_id（QQ 号）"
         backend_name = str(b.get("backend_name") or "").strip()
         comp_key = str(b.get("key") or "").strip()
         if not backend_name:
             backend_name = {"lagrange": "lagrange", "napcat": "onebot",
                             "null": "null"}.get(comp_key, "onebot")
         if backend_name not in {x["key"] for x in _BACKENDS}:
-            return _err(f"未知连接方式: {backend_name}")
+            return False, f"未知连接方式: {backend_name}"
 
         base = get_base()
         ws_url, http_url, token = "", "", ""
@@ -251,9 +257,9 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
         if comp_key and b.get("write_config", True):
             comp = C.COMPONENTS.get(comp_key)
             if comp is None:
-                return _err(f"未知组件: {comp_key}")
+                return False, f"未知组件: {comp_key}"
             if not C.is_installed(comp, base):
-                return _err(f"组件还没装：请先在第②步『下载并安装』{comp.label}", 409)
+                return False, f"组件还没装：请先在第②步『下载并安装』{comp.label}"
             cfg_data = _write_config(comp, {"qq": aid, "ws_port": b.get("ws_port"),
                                             "http_port": b.get("http_port"),
                                             "token": b.get("token")})
@@ -282,9 +288,19 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
                 state.set_backend(backend_name, ack_risk=True)
             except Exception:                       # noqa: BLE001
                 pass
-        return _ok({"account_id": aid, "backend_name": backend_name,
-                    "ws_url": cfg.ws_url, "http_url": cfg.http_url,
-                    "started": started, "start_error": start_err})
+        return True, {"account_id": aid, "backend_name": backend_name,
+                      "ws_url": cfg.ws_url, "http_url": cfg.http_url,
+                      "started": started, "start_error": start_err}
+
+    @app.post("/api/guide/account")
+    def guide_create_account():
+        """一键建账号（HTTP）：薄包装；逻辑在 _create_account_impl，桌面 RPC 复用同一份"""
+        ok, payload = _create_account_impl(_body())
+        if ok:
+            return _ok(payload)
+        msg = str(payload)
+        code = 501 if "没有账号管理器" in msg else (409 if "还没装" in msg else 400)
+        return _err(msg, code)
 
     @app.post("/api/guide/account/<aid>/backend")
     def guide_set_account_backend(aid: str):
