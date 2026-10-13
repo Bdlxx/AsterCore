@@ -218,3 +218,41 @@ class RuntimeSettingsRouteTest(unittest.TestCase):
     def test_missing_mode_is_400(self):
         r = self.client.post("/api/settings/runtime", json={})
         self.assertEqual(r.status_code, 400)
+
+
+class SettingsPageRouteTest(unittest.TestCase):
+    """设置合并进面板后：/ui/page/settings-page 必须能渲染（导航项在 PAGES 里）"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountManager
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        cls.mgr = AccountManager(accounts_dir=base / "accounts")
+        cls.panel = ManagerWebPanel(cls.mgr, lambda: None, app_state=cls.state)
+        cls.client = cls.panel.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_page_registered_and_rendered(self):
+        from astercore.web import ui_pages
+        self.assertIn("settings-page", ui_pages.PAGES, "页面要注册进 PAGES，侧栏才会出现")
+        r = self.client.get("/ui/page/settings-page")
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
+        body = r.get_json()["data"]["html"]
+        for marker in ("页面模式与端口", "sp_mode", "sp_port", "34567"):
+            self.assertIn(marker, body)
+
+    def test_unknown_page_still_404(self):
+        self.assertEqual(self.client.get("/ui/page/nope").status_code, 404)
+

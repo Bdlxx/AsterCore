@@ -6,8 +6,8 @@
 # 版本号与 astercore.__version__ 的一致性由 tests/test_packaging.py 钉住。
 VSVersionInfo(
     ffi=FixedFileInfo(
-        filevers=(0, 6, 1, 0),
-        prodvers=(0, 6, 1, 0),
+        filevers=(0, 6, 2, 0),
+        prodvers=(0, 6, 2, 0),
         mask=0x3F,
         flags=0x0,
         OS=0x40004,
@@ -23,12 +23,12 @@ VSVersionInfo(
                     [
                         StringStruct("CompanyName", "栖星 AsterCore"),
                         StringStruct("FileDescription", "栖星 AsterCore · QQ 机器人框架（Windows 桌面版）"),
-                        StringStruct("FileVersion", "0.6.1.0"),
+                        StringStruct("FileVersion", "0.6.2.0"),
                         StringStruct("InternalName", "astercore"),
                         StringStruct("LegalCopyright", "Copyright (C) 2026 栖星 AsterCore"),
                         StringStruct("OriginalFilename", "astercore.exe"),
                         StringStruct("ProductName", "栖星 AsterCore"),
-                        StringStruct("ProductVersion", "0.6.1"),
+                        StringStruct("ProductVersion", "0.6.2"),
                     ],
                 )
             ]

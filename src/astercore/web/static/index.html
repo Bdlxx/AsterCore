@@ -319,6 +319,20 @@ PANEL.hooks = {
         if (r && r.ok) { PANEL.toast('安全设置已保存', 'success'); PANEL.renderPage(); }
         else formMsg('auMsg', (r && r.error) || '保存失败', true);
       });
+    },
+    'settings-page': async function (btn) {
+      await PANEL.runBusy(btn, '保存中…', async function () {
+        const mode = document.getElementById('sp_mode');
+        const port = document.getElementById('sp_port');
+        const r = await post('/api/setup/page', {
+          page_mode: mode ? mode.value : 'window',
+          port: port ? port.value : ''
+        });
+        if (r && r.ok) {
+          PANEL.toast('页面设置已保存' + (r.data && r.data.restart_needed ? '（重启后生效）' : ''), 'success');
+          PANEL.renderPage();
+        } else formMsg('spMsg', (r && r.error) || '保存失败', true);
+      });
     }
   },
   saveRestart: function (btn) { PANEL.saveConfig(btn, true); },
@@ -411,6 +425,17 @@ PANEL.endpoints.page = function (p) {
 };
 
 PANEL.start();
+
+/* 深链：/?page=settings-page —— 启动后点一下对应导航项（复用面板自己的路由） */
+try {
+  var _deepPage = new URLSearchParams(location.search).get('page');
+  if (_deepPage) {
+    setTimeout(function () {
+      var _el = document.querySelector('.nav-item[data-page="' + _deepPage + '"]');
+      if (_el) { _el.click(); }
+    }, 400);
+  }
+} catch (e) { }
 </script>
 <!-- 桌面端顶栏 + 账号浮层（能力探测：Linux 端无 /api/app/* 时自动隐藏，见 panel.js） -->
 <div id="desktopBar" style="display:none">

@@ -604,6 +604,16 @@ class ManagerWebPanel:
                                               or pkey)
             if page == "settings-runtime":
                 ctx["runtime"] = self._runtime_payload()
+            if page == "settings-page":
+                st = self.app_state
+                try:
+                    pg_port = int((st.web_config() or {}).get("port") or 34567) if st else 34567
+                except (TypeError, ValueError):
+                    pg_port = 34567
+                pg_mode = "window"
+                if st is not None and st.transport_mode() not in ("webview", "auto"):
+                    pg_mode = "port"
+                ctx["page"] = {"mode": pg_mode, "port": pg_port}
             if page == "settings-auth":
                 authed = self.auth.mode == "none" or bool(session.get("ac_auth"))
                 ctx["auth"] = {"authed": authed, "mode": self.auth.mode,

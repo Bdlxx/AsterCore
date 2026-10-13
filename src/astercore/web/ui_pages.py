@@ -200,6 +200,26 @@ def _settings_auth(ctx):
       </div>""")
 
 
+
+def _settings_page(ctx):
+    """页面与端口（规格 §三 卡片二）。保存走已有的 /api/setup/page（校验/落盘都在那）。"""
+    pg = ctx.get('page') or {}
+    mode = pg.get('mode') or 'window'
+    port = pg.get('port') or 34567
+    return card('🖥️ 页面模式与端口', f"""
+      <div class="cf-form">
+        <div class="cf-field"><label class="cf-label">页面模式</label>
+          <select id="sp_mode">
+            <option value="window"{" selected" if mode == "window" else ""}>窗口模式（内嵌窗口）</option>
+            <option value="port"{" selected" if mode == "port" else ""}>端口模式（浏览器访问）</option>
+          </select>
+          <div class="cf-help">窗口模式不需要任何端口；端口模式会在本机开一个 Web 端口供浏览器访问</div></div>
+        <div class="cf-field"><label class="cf-label" for="sp_port">端口</label>
+          <input type="number" id="sp_port" min="1" max="65535" value="{port}">
+          <div class="cf-help">范围 1-65535，默认 34567（避开常用端口）。改动重启程序后生效</div></div>
+        <div id="spMsg" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
+      </div>""")
+
 PAGES = {
     'dashboard': (_dashboard, '概览', []),
     'accounts': (_accounts, '账号管理', []),
@@ -207,6 +227,7 @@ PAGES = {
     'logs': (lambda ctx: pp.logs_page(ctx, '运行日志', '运行日志（最近 200 条）'), '运行日志', []),
     'settings-runtime': (_settings_runtime, '运行方式', ['save']),
     'settings-auth': (_settings_auth, '安全设置', ['save']),
+    'settings-page': (_settings_page, '页面与端口', ['save']),
 }
 
 # 设置页保存按钮的标题

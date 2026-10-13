@@ -73,8 +73,12 @@ def add_setup_routes(app, state, auth=None) -> None:
 
     @app.get("/settings")
     def settings_page():
-        from flask import Response
-        return Response(SETTINGS_HTML, mimetype="text/html; charset=utf-8")
+        """设置已合并进面板「设置」组（运行方式 / 安全设置 / 页面与端口）→ 跳过去。
+
+        保留这个路由只为兼容旧链接/旧入口；唯一入口=面板设置页（避免两处设置）。
+        """
+        from flask import redirect
+        return redirect("/?page=settings-page", code=302)
 
     # ---------------- 状态 ----------------
     @app.get("/api/setup/state")
@@ -212,7 +216,7 @@ SETUP_HTML = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <div class="sub">先选一个使用方式，之后随时可以在「设置」里改。</div>
 <div id="opts"></div>
 <div class="muted" id="msg" style="margin-top:10px"></div>
-<button id="settingsBtn" class="ghost" onclick="location.href='/settings'">设置</button>
+<button id="settingsBtn" class="ghost" onclick="location.href='/?page=settings-page'">设置</button>
 <script>
 const $=(id)=>document.getElementById(id);
 async function api(p,b){const r=await fetch(p,{method:b?'POST':'GET',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});try{return await r.json()}catch(e){return {ok:false,error:'HTTP '+r.status}}}
@@ -231,7 +235,7 @@ async function load(){
     <div class="row" style="margin-top:8px">
       <label class="muted"><input type="checkbox" id="ack" style="width:auto"> 我已知晓风险（选「内部协议」必须勾）</label>
       <button onclick="save()">就用这个，进入主界面</button>
-      <button class="ghost" onclick="location.href='/settings'">先去设置</button>
+      <button class="ghost" onclick="location.href='/?page=settings-page'">先去设置</button>
     </div>`;
 }
 async function save(){

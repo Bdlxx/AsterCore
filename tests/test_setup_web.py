@@ -53,12 +53,12 @@ class SetupPageTest(unittest.TestCase):
         s = self.client.get("/setup")
         self.assertEqual(s.status_code, 200)
         self.assertIn("首次设置", s.get_data(as_text=True))
-        self.assertIn("/settings", s.get_data(as_text=True), "引导页左下角要有设置入口")
+        self.assertIn("settings-page", s.get_data(as_text=True),
+                      "引导页左下角要有设置入口（指向面板设置页）")
+        # 设置已合并进面板 → /settings 只做跳转（兼容旧链接）
         t = self.client.get("/settings")
-        self.assertEqual(t.status_code, 200)
-        body = t.get_data(as_text=True)
-        for marker in ("安全设置", "设置密码", "修改密码", "页面模式与端口"):
-            self.assertIn(marker, body)
+        self.assertEqual(t.status_code, 302)
+        self.assertIn("page=settings-page", t.headers.get("Location", ""))
 
     def test_without_state_no_routes(self):
         from flask import Flask
