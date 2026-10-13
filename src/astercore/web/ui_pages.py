@@ -351,7 +351,9 @@ def _about_page(ctx):
             <span class="el-tag {'success' if state == 'done' else 'info'}">{esc(msg)}</span>
           </div>
           <div class="cf-help">更新流程：检查 → 下载 → <b>sha256 校验</b> → 暂存 → 重启替换；
-            新版本起不来会自动回滚到旧版本。</div></div>
+            新版本起不来会自动回滚到旧版本。</div>
+          <div class="cf-help">遇到问题先看程序目录里的 <b>docs/常见问题FAQ.md</b>（SmartScreen 解除锁定、
+            引导流程、日志位置、数据搬迁、反馈模板）与 <b>使用说明.txt</b>。</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
           <button class="btn" data-act="up-check">检查更新</button>
           <button class="btn" data-act="up-start">下载并校验</button>
