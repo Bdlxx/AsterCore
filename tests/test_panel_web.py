@@ -332,3 +332,66 @@ class GuidePageInPanelTest(unittest.TestCase):
         src = inspect.getsource(launch._entry_url)
         self.assertNotIn("/setup", src)
 
+
+class SpecNamingTest(unittest.TestCase):
+    """规格命名对齐：inited / page.mode / page.port（旧键必须仍可读）"""
+
+    def _state(self, files=None):
+        from astercore.app import AppState
+        import json as _json
+        tmp = tempfile.TemporaryDirectory()
+        base = Path(tmp.name)
+        if files:
+            (base / "runtime.json").write_text(_json.dumps(files, ensure_ascii=False), encoding="utf-8")
+        st = AppState(base)
+        st.load()
+        return tmp, st
+
+    def test_new_names_roundtrip(self):
+        tmp, st = self._state()
+        try:
+            self.assertFalse(st.inited)
+            st.set_inited(True)
+            self.assertTrue(st.inited)
+            ok, msg = st.set_page_config("port", 41234)
+            self.assertTrue(ok, msg)
+            cfg = st.page_config()
+            self.assertEqual(cfg["mode"], "port")
+            self.assertEqual(cfg["port"], 41234)
+            raw = json.loads((Path(tmp.name) / "runtime.json").read_text(encoding="utf-8"))
+            self.assertIn("inited", raw, "要写规格名 inited")
+            self.assertEqual(raw["page"]["port"], 41234, "要写规格名 page.port")
+            self.assertEqual(raw["web"]["port"], 41234, "旧键也要同步，启动逻辑还读它")
+            self.assertTrue(st.inited)
+        finally:
+            tmp.cleanup()
+
+    def test_old_config_still_readable(self):
+        """老配置文件只有 wizard_completed / transport / web.port → 必须照旧能用"""
+        tmp, st = self._state({"wizard_completed": True, "wizard_version": 9,
+                               "transport": {"mode": "http"},
+                               "web": {"enabled": True, "host": "127.0.0.1", "port": 45678}})
+        try:
+            self.assertTrue(st.inited, "旧名 wizard_completed 要能读成 inited")
+            self.assertEqual(st.page_config(), {"mode": "port", "port": 45678})
+        finally:
+            tmp.cleanup()
+
+    def test_invalid_page_config_rejected(self):
+        tmp, st = self._state()
+        try:
+            self.assertFalse(st.set_page_config("nope")[0])
+            self.assertFalse(st.set_page_config("port", 0)[0], "端口 0 非法")
+            self.assertFalse(st.set_page_config("port", 70000)[0], "端口越界非法")
+            self.assertFalse(st.set_page_config("port", "abc")[0], "非数字非法")
+        finally:
+            tmp.cleanup()
+
+    def test_window_mode_default(self):
+        tmp, st = self._state()
+        try:
+            self.assertEqual(st.page_config()["mode"], "window", "默认窗口模式")
+            self.assertEqual(st.page_config()["port"], 34567, "默认端口 34567")
+        finally:
+            tmp.cleanup()
+

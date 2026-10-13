@@ -56,14 +56,10 @@ def add_setup_routes(app, state, auth=None) -> None:
         return (not state.needs_wizard()) and bool(_mode())
 
     def _page_mode() -> str:
-        t = state.transport_mode()
-        return "window" if t in ("webview", "auto") else "port"
+        return str(state.page_config()["mode"])          # 规格名 page.mode（兼容旧 transport）
 
     def _port() -> int:
-        try:
-            return int(state.web_config().get("port") or DEFAULT_PORT)
-        except (TypeError, ValueError):
-            return DEFAULT_PORT
+        return int(state.page_config()["port"])          # 规格名 page.port（兼容旧 web.port）
 
     # ---------------- 页面 ----------------
     @app.get("/setup")
@@ -91,6 +87,7 @@ def add_setup_routes(app, state, auth=None) -> None:
             "page_mode": _page_mode(),
             "port": _port(),
             "auth_mode": (auth.mode if auth is not None else "none"),
+            "inited_key": "inited",          # 规格名（旧名 wizard_completed 仍可读）
             "has_password": bool(auth is not None and auth.data.get("password_hash")),
         })
 
@@ -167,26 +164,15 @@ def add_setup_routes(app, state, auth=None) -> None:
         mode = str(d.get("page_mode") or "").strip()
         if mode not in ("window", "port"):
             return _err("页面模式只能是 窗口模式 / 端口模式")
-        ok, msg = state.set_transport("webview" if mode == "window" else "http")
+        raw = d.get("port")
+        # 只有"没填"才用默认端口；0/-1/70000 这类都是非法值（规格：1-65535）
+        port = DEFAULT_PORT if raw is None or str(raw).strip() == "" else raw
+        auth_mode = auth.mode if auth is not None else "none"
+        ok, msg = state.set_page_config(mode, port, auth_mode=auth_mode)
         if not ok:
             return _err(msg)
-        if mode == "port":
-            raw = d.get("port")
-            # 只有"没填"才用默认端口；0/-1/70000 这类都是非法值（规格：1-65535）
-            port = DEFAULT_PORT if raw is None or str(raw).strip() == "" else raw
-            try:
-                port = int(port)
-            except (TypeError, ValueError):
-                return _err("端口必须是数字")
-            if not (1 <= port <= 65535):
-                return _err("端口范围 1-65535")
-            auth_mode = auth.mode if auth is not None else "none"
-            ok, msg, cfg = state.set_web_config(
-                {"enabled": True, "host": "127.0.0.1", "port": port}, auth_mode=auth_mode)
-            if not ok:
-                return _err(msg)
-            return _ok({"page_mode": mode, "port": cfg["port"], "restart_needed": True})
-        return _ok({"page_mode": mode, "port": _port(), "restart_needed": True})
+        return _ok({"page_mode": mode, "port": state.page_config()["port"],
+                    "restart_needed": True})
 
 
 # --------------------------------------------------------------------------- #

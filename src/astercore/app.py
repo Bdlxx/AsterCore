@@ -101,7 +101,9 @@ class AppState:
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
                 self.backend_mode = d.get("backend_mode", "napcat")
-                self.wizard_completed = bool(d.get("wizard_completed"))
+                # 规格名 inited（新）优先，回落到旧名 wizard_completed
+                self.wizard_completed = bool(d["inited"]) if "inited" in d \
+                    else bool(d.get("wizard_completed"))
                 self.wizard_version = int(d.get("wizard_version", 0))
                 self.risk_acknowledged = bool(d.get("risk_acknowledged"))
                 self.data = d.get("extra", {})
@@ -118,7 +120,8 @@ class AppState:
         self.data_root.mkdir(parents=True, exist_ok=True)
         d = {
             "backend_mode": self.backend_mode,
-            "wizard_completed": self.wizard_completed,
+            "inited": self.wizard_completed,          # 规格名（§一）
+            "wizard_completed": self.wizard_completed,   # 旧名，兼容保留
             "wizard_version": self.wizard_version,
             "risk_acknowledged": self.risk_acknowledged,
             "extra": self.data,
@@ -127,6 +130,65 @@ class AppState:
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, target)
+
+    # ---- 规格命名（§一）：inited / page.mode / page.port ----
+    @property
+    def inited(self) -> bool:
+        """是否完成引导（规格名；等价于 wizard_completed）"""
+        return bool(self.wizard_completed)
+
+    def set_inited(self, value: bool = True) -> None:
+        self.wizard_completed = bool(value)
+        if value:
+            self.wizard_version = WIZARD_VERSION
+        self.save()
+
+    @property
+    def mode(self) -> str:
+        """使用方式：napcat / internal / later（规格名；存 extra.setup_mode）"""
+        return str(self.data.get("setup_mode") or "")
+
+    def page_config(self) -> dict[str, Any]:
+        """页面模式与端口（规格名 page.mode / page.port；兼容旧 transport / web.port）"""
+        cfg = dict(self.data.get("page") or {})
+        mode = str(cfg.get("mode") or "").strip().lower()
+        if mode not in ("window", "port"):
+            mode = "window" if self.transport_mode() in ("webview", "auto") else "port"
+        try:
+            port = int(cfg.get("port") or self.web_config().get("port") or 34567)
+        except (TypeError, ValueError):
+            port = 34567
+        return {"mode": mode, "port": port}
+
+    def set_page_config(self, mode: str | None = None, port: int | None = None,
+                        auth_mode: str = "none") -> tuple[bool, str]:
+        """写规格名 page.*，**同时**更新旧键（transport / web），两边都读得到"""
+        cur = self.page_config()
+        mode = str(mode or cur["mode"]).strip().lower()
+        if mode not in ("window", "port"):
+            return False, "页面模式只能是 窗口模式 / 端口模式"
+        if port is None:
+            port = cur["port"]
+        else:
+            try:
+                port = int(port)
+            except (TypeError, ValueError):
+                return False, "端口必须是数字"
+            if not (1 <= port <= 65535):
+                return False, "端口范围 1-65535"
+        self.data["page"] = {"mode": mode, "port": port}
+        ok, msg = self.set_transport("webview" if mode == "window" else "http")
+        if not ok:
+            return False, msg
+        if mode == "port":
+            ok2, msg2, _cfg = self.set_web_config(
+                {"enabled": True, "host": "127.0.0.1", "port": port}, auth_mode=auth_mode)
+            if not ok2:
+                return False, msg2
+        else:
+            self.save()
+        log.info("页面配置已保存：%s", self.data.get("page"))
+        return True, ""
 
     # ---- 当前账号（托盘/主界面共用；持久化在 extra） ----
     @property
