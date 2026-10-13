@@ -157,7 +157,13 @@ async def amain(args: argparse.Namespace) -> int:
 
     # 面板：HTTP 与进程内 RPC **共用同一份路由**（手册 §1.4 单一 dispatch）
     loop = asyncio.get_running_loop()
-    panel = ManagerWebPanel(mgr, loop_provider=lambda: loop, app_state=state)
+    from astercore.botstate import BotController
+    # 托盘 / 主界面 / 接口共用同一个状态机（规格 §四：状态实时同步）
+    controller = BotController(mgr, loop_provider=lambda: loop,
+                               state_get=lambda: state.current_account,
+                               state_set=state.set_current_account)
+    panel = ManagerWebPanel(mgr, loop_provider=lambda: loop, app_state=state,
+                            bot_controller=controller)
     from astercore.rpc import build_hub
     hub = build_hub()
     hub.bind_panel(panel)
@@ -220,7 +226,7 @@ async def amain(args: argparse.Namespace) -> int:
         print("[launch] 提示：打开面板 → 账号 → 新建账号 填入你的 QQ 号与 NapCat 地址")
 
     if desktop:
-        return await _run_desktop(args, state, panel, hub, mgr, http_url)
+        return await _run_desktop(args, state, panel, hub, mgr, http_url, controller)
 
     # 降级告知（规范 §5.1）：不能静默打开浏览器。必须说清"为什么 + 地址 + 怎么装"
     #
@@ -230,7 +236,7 @@ async def amain(args: argparse.Namespace) -> int:
     if fallback and wv2 is not None and not wv2.ok:
         _explain_downgrade(wv2, http_url)
 
-    _start_tray_for_http(hub, http_url, state)
+    _start_tray_for_http(hub, http_url, state, controller)
 
     import os as _os
     if not args.no_browser and not _os.environ.get("ASTER_NO_OPEN"):
@@ -329,7 +335,7 @@ def _explain_downgrade(status, url: str) -> None:
     message_box("栖星 AsterCore · 已切换为浏览器模式", "\n".join(lines), kind=kind)
 
 
-def _start_tray_for_http(hub, url: str, state) -> None:
+def _start_tray_for_http(hub, url: str, state, controller=None) -> None:
     """HTTP 模式下的托盘常驻（规范 §5.3）。
 
     没有托盘能力就什么都不做 —— 不能因为托盘不可用就把程序变成"关不掉"。
@@ -354,11 +360,16 @@ def _start_tray_for_http(hub, url: str, state) -> None:
                 if cb:
                     cb()
 
+            from astercore.shell import build_tray_menu
+            import webbrowser
             app = ShellApp("", hub=hub, tray=True, title=title)
-            icon = pystray.Icon("astercore", app._make_icon_image(), title,
-                                pystray.Menu(
-                                    pystray.MenuItem("打开面板", _on_open, default=True),
-                                    pystray.MenuItem("退出", _on_quit)))
+            # 规格 §二 的同一份菜单：HTTP 模式下"显示面板"= 打开浏览器
+            menu = build_tray_menu(controller,
+                                   toggle_cb=lambda: webbrowser.open(url),
+                                   quit_cb=app.quit)
+            icon = pystray.Icon("astercore", app._make_icon_image(), title, menu)
+            if controller is not None:
+                controller.on_change = lambda: icon.update_menu()
             icon.run()
         except Exception as e:                       # noqa: BLE001
             print(f"[launch] 托盘不可用: {e}")
@@ -374,7 +385,8 @@ def _random_free_port() -> int:
         return int(s.getsockname()[1])
 
 
-async def _run_desktop(args, state, panel, hub, mgr, http_url: str) -> int:
+async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
+                     controller=None) -> int:
     """桌面模式：窗口 + js_api RPC（阻塞直到退出）。
 
     手册 §2.1「开窗时机」：先把窗口开出来（WebView2 初始化本身 300-800ms 无法优化），
@@ -405,7 +417,7 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str) -> int:
         "transport": "jsapi",
     })
 
-    shell = ShellApp(url=http_url, hub=hub, html_path=html,
+    shell = ShellApp(controller=controller, url=http_url, hub=hub, html_path=html,
                      on_quit=None, title=f"栖星 AsterCore v{__version__}",
                      debug=bool(getattr(args, "debug", False)))
     holder["shell"] = shell

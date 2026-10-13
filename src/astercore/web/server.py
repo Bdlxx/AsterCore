@@ -222,13 +222,14 @@ class ManagerWebPanel:
 
     def __init__(self, manager, loop_provider, static_dir=None,
                  auth_file: str | Path | None = None,
-                 app_state=None) -> None:
+                 app_state=None, bot_controller=None) -> None:
         """app_state: core.app.AppState（运行方式/向导状态），可 None"""
         if Flask is None:
             raise RuntimeError("需要 Flask：pip install astercore[web]")
         self.manager = manager
         self._loop_provider = loop_provider
         self.app_state = app_state
+        self.bot_controller = bot_controller   # 托盘/主界面共用的机器人状态机
         self.static_dir = Path(static_dir) if static_dir else Path(__file__).parent / "static"
         self.app = Flask("astercore-web", static_folder=str(self.static_dir),
                          static_url_path="/assets")
@@ -671,7 +672,7 @@ class ManagerWebPanel:
 
         @app.post("/api/settings/runtime")
         def api_runtime_set():
-            if st.backend_mode != "none" and st.wizard_completed and not _session_authed():
+            if st.backend_mode != "none" and st.wizard_completed and not self._session_authed():
                 return _err("需先登录", 401)
             d = request.get_json(force=True, silent=True) or {}
             if d.get("action") == "reset_wizard":

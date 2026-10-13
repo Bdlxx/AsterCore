@@ -47,6 +47,7 @@ class ShellApp:
 
     def __init__(self, url: str = "", on_quit: Callable[[], None] | None = None,
                  title: str = "栖星 AsterCore", tray: bool = True,
+                 controller=None,
                  hub=None, html_path: str | Path | None = None,
                  on_ready: Callable[[], None] | None = None,
                  debug: bool = False,
@@ -63,6 +64,8 @@ class ShellApp:
         self.height = height
         self._window = None
         self._tray_icon = None
+        self.controller = controller          # BotController（托盘与主界面共用状态）
+        self._window_visible = True
         self._quitting = False
         self._ready_started = False
 
@@ -110,6 +113,7 @@ class ShellApp:
             win = self._window
             if win is not None and hasattr(win, "hide"):
                 win.hide()
+                self._window_visible = False
                 log.info("窗口已隐藏到托盘（退出请用托盘菜单）")
                 return False
         except Exception as e:                    # noqa: BLE001 — 隐藏失败就让它正常关
@@ -193,34 +197,98 @@ class ShellApp:
         except Exception as e:                     # noqa: BLE001
             log.warning("销毁窗口失败: %s", e)
 
+    def _hide_window(self) -> None:
+        try:
+            if self._window is not None:
+                self._window.hide()
+                self._window_visible = False
+        except Exception as e:                     # noqa: BLE001
+            log.debug("隐藏窗口失败: %s", e)
+
+    def toggle_window(self) -> None:
+        """托盘左键：显示 / 隐藏主面板（规格 §二）"""
+        if self._window_visible:
+            self._hide_window()
+        else:
+            self._show_window()
+
     def _show_window(self) -> None:
         try:
             if self._window is not None:
                 self._window.show()
+                self._window_visible = True
         except Exception as e:                     # noqa: BLE001
             log.debug("显示窗口失败: %s", e)
 
     def run_tray(self, open_panel_cb: Callable[[], None] | None = None) -> None:
+        """系统托盘（规格 §二）：左键切换面板；右键菜单含昵称/状态/启停/重启/退出"""
         if not (self.tray and ShellApp.tray_available()):
             return
         try:
             import pystray
 
-            def _on_open(icon, item):
-                self._show_window()
+            ctl = self.controller
+
+            def _snap() -> dict:
+                try:
+                    return ctl.snapshot() if ctl is not None else {}
+                except Exception:                  # noqa: BLE001 托盘不能被状态读取拖挂
+                    return {}
+
+            def _toggle_text(item):
+                return "隐藏面板" if self._window_visible else "显示面板"
+
+            def _nick_text(item):
+                return f"昵称：{_snap().get('nickname') or '—'}"
+
+            def _state_text(item):
+                return f"状态：{_snap().get('state_label') or '—'}"
+
+            def _startstop_text(item):
+                return _snap().get("button") or "启动机器人"
+
+            def _startstop_enabled(item):
+                return bool(_snap().get("button_enabled", True))
+
+            def _restart_enabled(item):
+                return bool(_snap().get("restart_enabled", False))
+
+            def _on_toggle(icon, item):
+                self.toggle_window()
+
+            def _on_startstop(icon, item):
+                if _snap().get("state") == "running":
+                    ctl.stop()
+                else:
+                    ctl.start()
+
+            def _on_restart(icon, item):
+                ctl.restart()
 
             def _on_quit(icon, item):
                 self.quit()
 
-            menu = pystray.Menu(
-                pystray.MenuItem("打开面板", _on_open, default=True),
-                pystray.MenuItem("退出", _on_quit),
+            menu = build_tray_menu(
+                ctl,
+                toggle_cb=self.toggle_window,
+                quit_cb=self.quit,
+                is_visible=lambda: self._window_visible,
             )
             self._tray_icon = pystray.Icon("astercore", self._make_icon_image(),
                                            self.title, menu)
+            if ctl is not None:
+                # 状态一变就刷新菜单（主界面按钮读同一份状态 → 天然同步）
+                ctl.on_change = lambda: self._safe_update_menu()
             self._tray_icon.run()
         except Exception as e:                     # noqa: BLE001
             log.warning("托盘不可用: %s", e)
+
+    def _safe_update_menu(self) -> None:
+        try:
+            if self._tray_icon is not None:
+                self._tray_icon.update_menu()
+        except Exception:                          # noqa: BLE001
+            log.debug("刷新托盘菜单失败", exc_info=True)
 
     # ---------- 统一入口 ----------
     def run(self, with_tray: bool = True) -> None:
@@ -230,3 +298,71 @@ class ShellApp:
         self.open_panel()
         if self.on_quit:
             self.on_quit()
+
+
+def build_tray_menu(controller, *, toggle_cb, quit_cb, is_visible=None):
+    """规格 §二 的系统托盘菜单（pywebview 壳 与 HTTP 端口模式 共用这一份构造）
+
+    - 左键（default 项）：显示/隐藏面板
+    - 昵称 / 状态：**纯文本禁用项**
+    - 启停：文案随状态机变化；启动中/停止中禁用
+    - 重启：仅运行中可用
+    - 退出软件
+    """
+    import pystray
+
+    def _snap() -> dict:
+        try:
+            return controller.snapshot() if controller is not None else {}
+        except Exception:                          # noqa: BLE001
+            return {}
+
+    def _toggle_text(item):
+        if is_visible is not None:
+            try:
+                return "隐藏面板" if is_visible() else "显示面板"
+            except Exception:                      # noqa: BLE001
+                pass
+        return "显示面板"
+
+    def _nick_text(item):
+        return f"昵称：{_snap().get('nickname') or '—'}"
+
+    def _state_text(item):
+        return f"状态：{_snap().get('state_label') or '—'}"
+
+    def _startstop_text(item):
+        return _snap().get("button") or "启动机器人"
+
+    def _startstop_enabled(item):
+        return bool(_snap().get("button_enabled", True))
+
+    def _restart_enabled(item):
+        return bool(_snap().get("restart_enabled", False))
+
+    def _on_toggle(icon, item):
+        toggle_cb()
+
+    def _on_startstop(icon, item):
+        if _snap().get("state") == "running":
+            controller.stop()
+        else:
+            controller.start()
+
+    def _on_restart(icon, item):
+        controller.restart()
+
+    def _on_quit(icon, item):
+        quit_cb()
+
+    return pystray.Menu(
+        pystray.MenuItem(_toggle_text, _on_toggle, default=True),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(_nick_text, None, enabled=lambda item: False),
+        pystray.MenuItem(_state_text, None, enabled=lambda item: False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(_startstop_text, _on_startstop, enabled=_startstop_enabled),
+        pystray.MenuItem("重启机器人", _on_restart, enabled=_restart_enabled),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("退出软件", _on_quit),
+    )

@@ -165,3 +165,56 @@ class PanelApiSmokeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- #
+# 运行方式页的两个按钮（保存 / 重跑启动向导）
+# 回归：曾经写成裸名 `_session_authed()`（它其实是 self. 的方法）→ 一点就
+# 「异常: NameError: name '_session_authed' is not defined」，页面按钮全废。
+# --------------------------------------------------------------------------- #
+class RuntimeSettingsRouteTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        import astercore.core.manager as mgr_mod
+
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        accounts_dir = base / "accounts"
+        accounts_dir.mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        cls.state.set_backend("napcat", ack_risk=True)     # 先当作已完成引导
+        cls.mgr = mgr_mod.AccountManager(accounts_dir=accounts_dir)
+        cls.panel = ManagerWebPanel(cls.mgr, lambda: None, app_state=cls.state)
+        cls.client = cls.panel.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_reset_wizard_does_not_crash(self):
+        r = self.client.post("/api/settings/runtime", json={"action": "reset_wizard"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        j = r.get_json()
+        self.assertTrue(j["ok"], j)
+        self.assertTrue(j["data"]["needs_wizard"])
+
+    def test_save_mode_does_not_crash(self):
+        r = self.client.post("/api/settings/runtime",
+                             json={"backend_mode": "lagrange", "ack_risk": True})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        self.assertTrue(r.get_json()["ok"])
+        self.assertEqual(self.state.backend_mode, "lagrange")
+
+    def test_save_mode_without_ack_is_400(self):
+        r = self.client.post("/api/settings/runtime", json={"backend_mode": "lagrange"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_missing_mode_is_400(self):
+        r = self.client.post("/api/settings/runtime", json={})
+        self.assertEqual(r.status_code, 400)

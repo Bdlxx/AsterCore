@@ -128,6 +128,15 @@ class AppState:
         tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, target)
 
+    # ---- 当前账号（托盘/主界面共用；持久化在 extra） ----
+    @property
+    def current_account(self) -> str:
+        return str(self.data.get("current_account") or "")
+
+    def set_current_account(self, account_id: str) -> None:
+        self.data["current_account"] = str(account_id)
+        self.save()
+
     # ---- 传输通道（WebView2 检测说明 §四） ----
     def transport_mode(self) -> str:
         """auto / webview / http（缺省或非法值一律按 auto 处理）"""
