@@ -404,6 +404,22 @@ PANEL.hooks = {
       if (!r || !r.ok) { return { ok: false, message: (r && r.error) || '应用更新失败' }; }
       return { ok: true, message: '程序将退出以应用更新，稍后会自动重新打开' };
     },
+    'gd-create': async function (el) {
+      const qq = document.getElementById('gdQQ');
+      const aid = qq ? (qq.value || '').trim() : '';
+      if (!aid) { return { ok: false, message: '先填 QQ 号' }; }
+      const key = el.getAttribute('data-key') || 'napcat';
+      const r = await post('/api/guide/account', { account_id: aid, key: key, start: true });
+      if (!r || !r.ok) {
+        const msg = (r && (r.error || (r.data && r.data.error))) || '建账号失败';
+        formMsg('gdOut', msg, true);
+        return { ok: false, message: msg };
+      }
+      const d = r.data || {};
+      formMsg('gdOut', '已建好 ' + aid + (d.started ? ' 并已启动' : ('（未启动：' + (d.start_error || '') + '）')));
+      PANEL.renderPage();
+      return { ok: true, message: '账号 ' + aid + ' 已建好' + (d.started ? '并启动' : '') };
+    },
     'gd-refresh': async function () {
       const r = await post('/api/guide/status', {});
       const box = document.getElementById('gdOut');

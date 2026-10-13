@@ -316,7 +316,8 @@ class GuidePageInPanelTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
         html = r.get_json()["data"]["html"]
         for marker in ("连接引导", "gd-install", "gd-config", "gd-host",
-                       "NapCat", 'data-key="napcat"', "由软件自带"):
+                       "NapCat", 'data-key="napcat"', "由软件自带",
+                       "gd-create", 'id="gdQQ"', "一键建好并启动"):
             self.assertIn(marker, html)
 
     def test_accounts_page_has_guide_entry(self):

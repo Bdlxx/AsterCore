@@ -303,6 +303,12 @@ def _guide_page(ctx):
           <button class="btn btn-default" data-act="gd-log" data-key="napcat">看日志</button>
           <button class="btn btn-default" data-act="gd-refresh">刷新状态</button>
         </div>
+        <div class="cf-field" style="margin-top:12px"><label class="cf-label">用这串连接信息建账号（一键）</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input id="gdQQ" type="text" inputmode="numeric" placeholder="QQ 号，如 123456789" style="width:200px">
+            <button class="btn" data-act="gd-create" data-key="napcat">一键建好并启动</button>
+          </div>
+          <div class="cf-help">会自动写入组件配置（端口/令牌与第②步一致）→ 建好账号 → 直接启动。</div></div>
         <div id="gdOut" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
         <div id="gdCfg" style="margin-top:10px;display:none"></div>
         <div id="gdQR" style="margin-top:10px"></div>
