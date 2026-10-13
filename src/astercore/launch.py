@@ -408,6 +408,84 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
         except Exception:                       # noqa: BLE001
             pass
 
+    # 桌面（file://）模式下，面板的 Transport 会把 fetch('/api/...') 转成 hub 方法调用；
+    # 桌面专属接口因此必须在这里注册一份（HTTP 那份只用于浏览器/端口模式）
+    try:
+        from astercore.web.setup import DEFAULT_PORT as _SP_DEFAULT
+
+        def _snap(p=None):
+            return controller.snapshot() if controller is not None else {"accounts": []}
+
+        def _accounts(p=None):
+            rows = []
+            for a in _snap().get("accounts", []):
+                name = str(a.get("display_name") or a.get("account_id") or "")
+                rows.append({"account_id": str(a.get("account_id")), "display_name": name,
+                             "short": name[:1] or "?", "running": bool(a.get("running")),
+                             "current": bool(a.get("current"))})
+            return {"accounts": rows}
+
+        def _act(fn):
+            def _h(p=None):
+                ok, msg = fn()
+                return {"ok": bool(ok), "msg": str(msg), "state": _snap()}
+            return _h
+
+        hub.register("/api/app/state", _snap)
+        hub.register("/api/app/accounts", _accounts)
+        if controller is not None:
+            hub.register("/api/app/start", _act(controller.start))
+            hub.register("/api/app/stop", _act(controller.stop))
+            hub.register("/api/app/restart", _act(controller.restart))
+
+        def _current(p=None):
+            aid = str((p or {}).get("aid") or "")
+            if controller is not None and aid:
+                controller.set_current_account(aid)
+            return _snap()
+        hub.register("/api/app/account-current", _current)
+
+        def _setup_state(p=None):
+            port = _SP_DEFAULT
+            try:
+                port = int((state.web_config() or {}).get("port") or _SP_DEFAULT)
+            except (TypeError, ValueError):
+                pass
+            auth_mode = getattr(getattr(panel, "auth", None), "mode", "none")
+            return {"inited": (not state.needs_wizard()) and bool(state.data.get("setup_mode")),
+                    "mode": state.data.get("setup_mode") or "",
+                    "port": port,
+                    "page_mode": "window" if state.transport_mode() in ("webview", "auto") else "port",
+                    "auth_mode": auth_mode}
+
+        def _setup_page(p=None):
+            p = p or {}
+            mode = str(p.get("page_mode") or "window")
+            ok, msg = state.set_transport("webview" if mode == "window" else "http")
+            if not ok:
+                return {"ok": False, "error": msg}
+            if mode == "port":
+                raw = p.get("port")
+                port = _SP_DEFAULT if raw in (None, "") else raw
+                try:
+                    port = int(port)
+                except (TypeError, ValueError):
+                    return {"ok": False, "error": "端口必须是数字"}
+                if not (1 <= port <= 65535):
+                    return {"ok": False, "error": "端口范围 1-65535"}
+                am = getattr(getattr(panel, "auth", None), "mode", "none")
+                ok2, msg2, cfg = state.set_web_config(
+                    {"enabled": True, "host": "127.0.0.1", "port": port}, auth_mode=am)
+                if not ok2:
+                    return {"ok": False, "error": msg2}
+                return {"ok": True, "page_mode": mode, "port": cfg["port"], "restart_needed": True}
+            return {"ok": True, "page_mode": mode, "restart_needed": True}
+
+        hub.register("/api/setup/state", _setup_state)
+        hub.register("/api/setup/page", _setup_page)
+    except Exception:                       # noqa: BLE001 注册失败不能拖垮启动
+        logging.getLogger("astercore.launch").exception("桌面 RPC 接口注册失败")
+
     hub.register("app.quit", lambda p: (_quit(), {"ok": True})[1])
     hub.register("window.hide", lambda p: (_hide(), {"ok": True})[1])
     hub.register("app.info", lambda p: {
