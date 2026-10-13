@@ -415,3 +415,20 @@ class SpecNamingTest(unittest.TestCase):
         finally:
             tmp.cleanup()
 
+
+class BotAvatarFallbackTest(unittest.TestCase):
+    """左上角账号卡头像：空 src 会显示破图（无账号时最明显）"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = PANEL_JS.read_text(encoding="utf-8")
+
+    def test_no_empty_avatar_src(self):
+        self.assertNotIn('botAvatar\\" src=\\"\\"', self.js, "不允许空 src（会破图）")
+        self.assertIn('botAvatar\\" src=\\"favicon.ico', self.js, "无账号时用应用图标")
+
+    def test_has_inline_fallback(self):
+        self.assertIn("DEFAULT_AVATAR", self.js)
+        self.assertIn("data:image/svg+xml", self.js, "要有不依赖文件的内联兜底")
+        self.assertIn("naturalWidth === 0", self.js, "文件不存在要立刻兜底")
+
