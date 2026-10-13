@@ -88,18 +88,31 @@ def bundled_dir(key: str) -> Path | None:
 
 
 def _scan_exe(root: Path, cmp: Component) -> Path | None:
+    """按候选名找可执行文件。
+
+    先看根目录、再看一层子目录（压缩包常带一层根目录）；都没有就**有界递归**找
+    —— 官方包的结构可能很深，例如自带的内置协议在
+    `lagrange/Lagrange.OneBot/bin/Release/net9.0/win-x64/publish/Lagrange.OneBot.exe`
+    （5 层）。无界 rglob 在异常目录上会卡，所以限制层数与命中数。
+    """
     if not root.is_dir():
         return None
     for name in cmp.exe_candidates:
         direct = root / name
         if direct.is_file():
             return direct
-    # 压缩包里常带一层 <pkg>/ 根目录 → 再扫一层
     for sub in sorted(p for p in root.iterdir() if p.is_dir()):
         for name in cmp.exe_candidates:
             cand = sub / name
             if cand.is_file():
                 return cand
+    for name in cmp.exe_candidates:
+        try:
+            for cand in sorted(root.rglob(name))[:50]:      # 有界：只看前 50 个命中
+                if cand.is_file() and "\\.git" not in str(cand):
+                    return cand
+        except OSError:
+            continue
     return None
 
 

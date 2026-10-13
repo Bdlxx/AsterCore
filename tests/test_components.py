@@ -290,3 +290,20 @@ class BundledComponentTest(unittest.TestCase):
         finally:
             self.C.bundled_dir = real
 
+    def test_deep_nested_layout_is_found(self):
+        """自带包真实结构很深（内置协议在 5 层目录里）—— 必须能找到"""
+        comp = self.C.get_component("lagrange")
+        deep = (Path(self.tmp.name) / "bundled" / "lagrange" / "Lagrange.OneBot"
+                / "bin" / "Release" / "net9.0" / "win-x64" / "publish")
+        deep.mkdir(parents=True)
+        exe = deep / comp.exe_candidates[0]
+        exe.write_bytes(b"MZ-deep")
+        real = self.C.bundled_dir
+        try:
+            self.C.bundled_dir = lambda key: (Path(self.tmp.name) / "bundled" / key)
+            got = self.C.find_executable(comp, self.base)
+            self.assertIsNotNone(got, "深层目录里也要能找到")
+            self.assertEqual(got.name, comp.exe_candidates[0])
+        finally:
+            self.C.bundled_dir = real
+
