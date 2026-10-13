@@ -238,3 +238,55 @@ class ComponentTableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BundledComponentTest(unittest.TestCase):
+    """内置协议必须**软件自带**：用户目录没装时，应能在自带目录里找到可执行文件"""
+
+    def setUp(self):
+        from astercore import components as C
+        self.C = C
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name) / "data"
+        self.base.mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_bundled_dir_none_when_absent(self):
+        # 源码树里没有 pack/components/lagrange 时也不能炸（CI/开发机都可能没有）
+        d = self.C.bundled_dir("definitely-not-a-component")
+        self.assertIsNone(d)
+
+    def test_find_executable_falls_back_to_bundled(self):
+        comp = self.C.get_component("lagrange")
+        bundled = Path(self.tmp.name) / "bundled" / "lagrange"
+        bundled.mkdir(parents=True)
+        exe = bundled / comp.exe_candidates[0]
+        exe.write_bytes(b"MZ")                      # 假的 exe，存在即可
+        real = self.C.bundled_dir
+        try:
+            self.C.bundled_dir = lambda key: bundled if key == "lagrange" else None
+            self.assertTrue(self.C.is_installed(comp, self.base),
+                            "用户目录里没有，但自带里有 → 算已安装（无需下载）")
+            self.assertIsNotNone(self.C.find_executable(comp, self.base))
+        finally:
+            self.C.bundled_dir = real
+
+    def test_user_dir_wins_over_bundled(self):
+        comp = self.C.get_component("lagrange")
+        user = self.C.component_dir(self.base, "lagrange")
+        user.mkdir(parents=True)
+        (user / comp.exe_candidates[0]).write_bytes(b"MZ-user")
+        bundled = Path(self.tmp.name) / "bundled" / "lagrange"
+        bundled.mkdir(parents=True)
+        (bundled / comp.exe_candidates[0]).write_bytes(b"MZ-bundled")
+        real = self.C.bundled_dir
+        try:
+            self.C.bundled_dir = lambda key: bundled if key == "lagrange" else None
+            got = self.C.find_executable(comp, self.base)
+            self.assertIsNotNone(got)
+            self.assertIn("MZ-user", got.read_bytes().decode("latin-1"))
+        finally:
+            self.C.bundled_dir = real
+

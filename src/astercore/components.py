@@ -13,6 +13,7 @@
 #   - **可离线**：install_from_zip() 既能下载也能吃用户已经下好的 zip（含 file:// 便于测试）。
 
 from __future__ import annotations
+import sys
 
 import json
 import logging
@@ -61,9 +62,32 @@ def component_dir(base_dir: str | Path, key: str) -> Path:
     return Path(base_dir) / COMPONENTS_DIRNAME / key
 
 
-def find_executable(cmp: Component, base_dir: str | Path) -> Path | None:
-    """在组件目录里按候选名找可执行文件（含一层子目录，压缩包常有根目录）"""
-    root = component_dir(base_dir, cmp.key)
+def bundled_dir(key: str) -> Path | None:
+    """软件**自带的**组件目录（PyInstaller 打包时随包分发）。
+
+    ⚠ 为什么要查 `_MEIPASS`：onedir 会把 spec 的 datas 放进 `_internal/`，
+    而 `sys._MEIPASS` 指向的就是 `_internal`。所以自带组件在
+    `<_MEIPASS>/components/<key>`；源码运行时按 `<repo>/pack/components/<key>` 兜底。
+    """
+    cands: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        mp = Path(meipass)
+        cands += [mp / "components" / key, mp.parent / "components" / key]
+    # 源码运行（未打包）时也认 pack/components/<key>
+    here = Path(__file__).resolve()
+    for up in (here.parents[2] if len(here.parents) > 2 else here.parent,):
+        cands.append(up / "pack" / "components" / key)
+    for c in cands:
+        try:
+            if c.is_dir():
+                return c
+        except OSError:
+            continue
+    return None
+
+
+def _scan_exe(root: Path, cmp: Component) -> Path | None:
     if not root.is_dir():
         return None
     for name in cmp.exe_candidates:
@@ -76,6 +100,17 @@ def find_executable(cmp: Component, base_dir: str | Path) -> Path | None:
             cand = sub / name
             if cand.is_file():
                 return cand
+    return None
+
+
+def find_executable(cmp: Component, base_dir: str | Path) -> Path | None:
+    """先找用户数据目录里装的；找不到就找**软件自带**的那份（无需下载）"""
+    found = _scan_exe(component_dir(base_dir, cmp.key), cmp)
+    if found is not None:
+        return found
+    bundled = bundled_dir(cmp.key)
+    if bundled is not None:
+        return _scan_exe(bundled, cmp)
     return None
 
 

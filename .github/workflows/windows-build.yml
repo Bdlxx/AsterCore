@@ -43,6 +43,18 @@ jobs:
           # <exe 同级>/tools/ffmpeg/bin/，bootstrap.find_ffmpeg() 会自动认
           python tools/fetch_ffmpeg.py
 
+      - name: Fetch Lagrange (bundled)
+        shell: pwsh
+        run: |
+          # 内置协议随包自带：解到 <repo>/pack/components/lagrange/，spec 收进 _internal/
+          # 这样用户装好软件即可用「内部协议」，引导页不需要再下载它。
+          $dst = "pack/components/lagrange"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          $url = "https://github.com/LagrangeDev/Lagrange.Core/releases/download/nightly/Lagrange.OneBot_win-x64_net9.0_SelfContained.zip"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP/lagrange.zip" -UseBasicParsing
+          Expand-Archive -Path "$env:TEMP/lagrange.zip" -DestinationPath $dst -Force
+          Get-ChildItem -Recurse $dst | Select-Object -First 8 FullName
+
       - name: Build exe (onedir)
         run: |
           python -m PyInstaller pack/astercore.spec --noconfirm --clean

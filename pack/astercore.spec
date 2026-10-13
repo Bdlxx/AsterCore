@@ -71,6 +71,14 @@ _ff = os.path.join(BASE, 'tools', 'ffmpeg', 'bin')
 if sys.platform == 'win32' and os.path.isdir(_ff):
     datas.append((_ff, 'tools/ffmpeg/bin'))
 
+# 内置协议（Lagrange.OneBot）**由软件自带**：构建前把官方包解到
+# <repo>/pack/components/lagrange/（CI 里有对应步骤），spec 收进
+# <exe 同级>/_internal/components/lagrange/。
+# components.bundled_dir() 会认这个位置 → 装好软件即"已安装"，不需要联网下载。
+_comp = os.path.join(BASE, 'pack', 'components', 'lagrange')
+if sys.platform == 'win32' and os.path.isdir(_comp):
+    datas.append((_comp, 'components/lagrange'))
+
 a = Analysis(
     [os.path.join(BASE, 'src/astercore/__main__.py')],
     pathex=[os.path.join(BASE, 'src')],
