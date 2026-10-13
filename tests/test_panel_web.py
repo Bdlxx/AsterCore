@@ -472,3 +472,48 @@ class RuntimePageLayoutTest(unittest.TestCase):
         for title in ("后端模式", "当前状态", "操作"):
             self.assertIn(title, self.html)
 
+
+class MergedSettingsPageTest(unittest.TestCase):
+    """设置合并页：左侧只一个「设置」入口，右侧三张卡片各带自己的保存按钮"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountManager
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        cls.panel = ManagerWebPanel(AccountManager(accounts_dir=base / "accounts"),
+                                    lambda: None, app_state=cls.state)
+        cls.client = cls.panel.app.test_client()
+        cls.html = cls.client.get("/ui/page/settings").get_json()["data"]["html"]
+        cls.index = (ROOT / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_three_cards_in_one_page(self):
+        for marker in ("后端模式", "安全设置", "页面与端口"):
+            self.assertIn(marker, self.html, f"{marker} 卡片要在设置页里")
+        self.assertGreaterEqual(self.html.count('class="card"'), 3)
+
+    def test_each_card_has_its_own_save(self):
+        for act in ("save-rt", "save-auth", "save-page"):
+            self.assertIn(f'data-act="{act}"', self.html, f"{act} 保存按钮要在")
+
+    def test_sidebar_has_single_settings_entry(self):
+        # 只看导航数组（'settings-runtime' 等仍会出现在保存注册表里，那是应该保留的）
+        m = re.search(r"PANEL\.nav = \[(.*?)\];", self.index, re.S)
+        self.assertIsNotNone(m, "index.html 里要有 PANEL.nav 数组")
+        nav = m.group(1)
+        self.assertIn("id: 'settings'", nav, "侧栏要有唯一「设置」入口")
+        for gone in ("settings-runtime", "settings-auth", "settings-page"):
+            self.assertNotIn(gone, nav, f"侧栏导航不应再列出 {gone}")
+

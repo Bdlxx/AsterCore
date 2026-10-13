@@ -154,9 +154,7 @@ PANEL.nav = [
   { id: 'config', icon: '⚙️', label: '插件配置', group: '管理', sub: true },
   { id: 'logs', icon: '📋', label: '运行日志', group: '管理' },
   { id: 'guide-page', icon: '🚀', label: '连接引导', group: '管理' },
-  { id: 'settings-runtime', icon: '🛠️', label: '运行方式', group: '设置' },
-  { id: 'settings-auth', icon: '🔒', label: '安全设置', group: '设置' },
-  { id: 'settings-page', icon: '🖥️', label: '页面与端口', group: '设置' },
+  { id: 'settings', icon: '⚙️', label: '设置', group: '设置' },
   { id: 'about-page', icon: '🔄', label: '关于与更新', group: '设置' }
 ];
 
@@ -364,6 +362,32 @@ PANEL.hooks = {
   },
   groupSelect: function () { return { groups: PANEL.hooks.groupCache || [], error: PANEL.hooks.groupErr || '' }; },
   actions: {
+    'save-rt': async function (btn) {
+      await PANEL.runBusy(btn, '保存中…', async function () {
+        const r = await post('/api/settings/runtime', collectForm('rt'));
+        formMsg('svrtMsg', (r && r.ok) ? '后端模式已保存' : ((r && r.error) || '保存失败'), !(r && r.ok));
+      });
+      return { ok: true, message: '后端模式已保存' };
+    },
+    'save-auth': async function (btn) {
+      await PANEL.runBusy(btn, '保存中…', async function () {
+        const r = await post('/api/settings/auth', collectForm('auth'));
+        formMsg('svauthMsg', (r && r.ok) ? '安全设置已保存' : ((r && r.error) || '保存失败'), !(r && r.ok));
+      });
+      return { ok: true, message: '安全设置已保存' };
+    },
+    'save-page': async function (btn) {
+      await PANEL.runBusy(btn, '保存中…', async function () {
+        const m = document.getElementById('sp_mode');
+        const pr = document.getElementById('sp_port');
+        const r = await post('/api/setup/page', { page_mode: m ? m.value : 'window',
+                                                  port: pr ? pr.value : '' });
+        formMsg('svpageMsg', (r && r.ok)
+          ? ('页面设置已保存' + (r.data && r.data.restart_needed ? '（重启后生效）' : ''))
+          : ((r && r.error) || '保存失败'), !(r && r.ok));
+      });
+      return { ok: true, message: '页面设置已保存' };
+    },
     'rt-pick': function (el) {
       /* 单选按钮：把选中的值同步给隐藏输入（保存仍走 collectForm('rt') 的 data-rt 约定） */
       const v = el.getAttribute('value') || '';

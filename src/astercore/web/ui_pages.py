@@ -389,3 +389,30 @@ def _about_page(ctx):
 
 PAGES['about-page'] = (_about_page, '关于与更新', [])
 
+
+def _save_row(kind: str, hint: str = "") -> str:
+    """每块设置自己的保存按钮（三块合到一页后，底部单一「保存」没法区分目标）"""
+    return f"""
+      <div style="display:flex;gap:10px;align-items:center;margin:10px 0 4px">
+        <button class="btn btn-primary" data-act="save-{kind}">💾 保存「{hint or kind}」</button>
+        <span id="sv{kind}Msg" style="font-size:12px;color:var(--text-secondary)"></span>
+      </div>"""
+
+
+def _settings_all(ctx):
+    """设置（合并页）：左侧只留一个「设置」入口，右侧三张卡片各管一块。
+
+    用户要求：把「运行方式 / 安全设置 / 页面与端口」三个分类**做到设置页右侧**，
+    左侧栏不再显示这三个选项。
+    """
+    return (
+        '<div class="cf-help" style="margin-bottom:10px">'
+        '这一页集中三块设置：<b>① 后端模式（单选）</b>、<b>② 安全设置</b>、<b>③ 页面与端口</b>。'
+        '每块下方各有自己的「保存」按钮，改哪块存哪块。</div>'
+        + _settings_runtime(ctx) + _save_row('rt', '后端模式')
+        + _settings_auth(ctx) + _save_row('auth', '安全设置')
+        + _settings_page(ctx) + _save_row('page', '页面与端口')
+    )
+
+
+PAGES['settings'] = (_settings_all, '设置', [])
