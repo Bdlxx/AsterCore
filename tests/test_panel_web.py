@@ -95,6 +95,18 @@ class PanelStaticTest(unittest.TestCase):
         self.assertIn("store.getItem('ac_token')", js, "业务代码应走带兜底的 store")
 
 
+class GuidePrefillTest(unittest.TestCase):
+    """手动建号场景：引导页要能把 ws/令牌带进账号表单（入口在桌面外壳 index.html 里）"""
+
+    def test_index_has_prefill_action(self):
+        html = (ROOT / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("gd-prefill", html)
+        self.assertIn("填入账号表单", html)
+        for fid in ("ac_ws", "ac_http", "ac_token"):
+            self.assertIn(fid, html, "要填进账号表单的这几个字段")
+        self.assertIn("store.setItem('prefill'", html, "必须走 store 兜底，不能裸用 localStorage")
+
+
 class SharedPanelEnvelopeTest(unittest.TestCase):
     """共用外壳（panel.js）与各端信封层的接线。
 

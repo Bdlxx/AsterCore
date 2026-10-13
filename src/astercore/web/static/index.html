@@ -404,6 +404,29 @@ PANEL.hooks = {
       if (!r || !r.ok) { return { ok: false, message: (r && r.error) || '应用更新失败' }; }
       return { ok: true, message: '程序将退出以应用更新，稍后会自动重新打开' };
     },
+    'gd-prefill': async function () {
+      /* 手动建号场景：把引导生成的 ws/令牌存起来，切到账号页后填进表单 */
+      const d = window.__gdCfg || {};
+      if (!d.ws_url && !d.access_token) {
+        return { ok: false, message: '还没有配置信息，先走第②步「写配置」' };
+      }
+      /* 必须走 store（file:// 下 localStorage 可能被禁用，裸用会让整段脚本死掉） */
+      store.setItem('prefill', JSON.stringify({
+        ws_url: d.ws_url || '', http_url: d.http_url || '', access_token: d.access_token || ''
+      }));
+      const nav = document.querySelector('.nav-item[data-page="accounts"]');
+      if (nav) { nav.click(); }
+      let tries = 0;
+      const timer = setInterval(function () {
+        tries += 1;
+        let pf = null;
+        try { pf = JSON.parse(store.getItem('prefill') || 'null'); } catch (e) { pf = null; }
+        const put = function (id, v) { const el = document.getElementById(id); if (el && v) { el.value = v; } };
+        if (pf) { put('ac_ws', pf.ws_url); put('ac_http', pf.http_url); put('ac_token', pf.access_token); }
+        if (tries > 12 || (pf && document.getElementById('ac_ws'))) { clearInterval(timer); }
+      }, 250);
+      return { ok: true, message: '已填入账号表单（填个 QQ 号再点保存即可）' };
+    },
     'gd-create': async function (el) {
       const qq = document.getElementById('gdQQ');
       const aid = qq ? (qq.value || '').trim() : '';
@@ -438,13 +461,16 @@ PANEL.hooks = {
       const r = await post('/api/guide/config', { key: key });
       if (!r || !r.ok) { formMsg('gdOut', (r && r.error) || '写配置失败', true); return; }
       const d = r.data || {};
+      window.__gdCfg = d;                      /* 记住这份连接信息，供"填入账号表单"用 */
       const box = document.getElementById('gdCfg');
       if (box) {
         box.style.display = 'block';
         box.innerHTML = '<div class="cf-field"><label class="cf-label">把这串填到账号表单</label>'
           + '<input type="text" readonly value="' + PANEL.esc(d.ws_url || '') + '">'
           + '<input type="text" readonly value="' + PANEL.esc(d.access_token || '') + '" style="margin-top:6px">'
-          + '<div class="cf-help">ws 地址 + 令牌；配置文件：' + PANEL.esc(d.path || '') + '</div></div>';
+          + '<div class="cf-help">ws 地址 + 令牌；配置文件：' + PANEL.esc(d.path || '') + '</div>'
+          + '<button class="btn btn-default" data-act="gd-prefill" style="margin-top:8px">'
+          + '把这份连接信息填入账号表单（手动建号用）</button></div>';
       }
       formMsg('gdOut', '配置已写入（端口与令牌已自动生成）');
       return { ok: true, message: '配置已写入' };
