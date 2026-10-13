@@ -90,9 +90,21 @@ jobs:
 
       # 同步发一个**公开 Release**：Actions 的 artifact 必须登录+token 才能下载，
       # 而本机发布密钥是只读 deploy key（拿不到 artifact），用户也不该为此登录。
+      - name: Write checksums
+        shell: pwsh
+        run: |
+          # 更新器要用 sha256 校验下载到的包：为每个 zip 生成 <zip>.sha256，随 Release 一起上传
+          Get-ChildItem dist/*.zip | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Set-Content "$($_.FullName).sha256" -Encoding ascii
+            Write-Host "checksum: $($_.Name) $h"
+          }
+
       - name: Publish release (tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: AsterCore-win64-*.zip
+          files: |
+            AsterCore-win64-*.zip
+            AsterCore-win64-*.zip.sha256
           generate_release_notes: true
