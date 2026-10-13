@@ -283,41 +283,46 @@ def render_status(ctx):
 def _guide_page(ctx):
     """连接引导（面板内一页）
 
-    用户要求：**引导下载的是 NapCat**（推荐路线）；内置协议由软件自带、不在这里下载。
-    所以本页固定 NapCat，另给一个"内置协议（软件自带）"的说明块。
+    用户要求：**页面主视线只展示 NapCat 三步安装引导**；其余（停止组件/看日志/刷新状态、
+    一键建账号、内置协议说明）收进「更多操作」，需要时再展开。
     """
     comp_dir = esc((ctx.get('guide') or {}).get('base_dir') or '')
     return card('🚀 连接引导', f"""
       <div class="cf-help" style="margin-bottom:10px">
-        推荐路线：<b>① 下载安装 NapCat（走官方 QQ 通道，风控最低）→ ② 写配置 → ③ 启动扫码</b>，
-        然后把连接信息填到「账号」页的表单里（ws 地址 + 令牌）。
+        推荐路线：<b>① 下载安装 NapCat</b>（走官方 QQ 通道，风控最低）→ <b>② 写配置</b>
+        → <b>③ 启动扫码</b>，然后把连接信息填到「账号」页（ws 地址 + 令牌）。
       </div>
       <div class="cf-form">
-        <div class="cf-field"><label class="cf-label">NapCat（推荐）</label>
-          <div class="cf-help">组件目录：{esc(comp_dir)}</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
           <button class="btn" data-act="gd-install" data-key="napcat">① 下载并安装 NapCat</button>
           <button class="btn" data-act="gd-config" data-key="napcat">② 写 NapCat 配置（自动端口/令牌）</button>
           <button class="btn" data-act="gd-host" data-key="napcat">③ 启动 NapCat 并取二维码</button>
-          <button class="btn btn-default" data-act="gd-stop" data-key="napcat">停止组件</button>
-          <button class="btn btn-default" data-act="gd-log" data-key="napcat">看日志</button>
-          <button class="btn btn-default" data-act="gd-refresh">刷新状态</button>
         </div>
-        <div class="cf-field" style="margin-top:12px"><label class="cf-label">用这串连接信息建账号（一键）</label>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <input id="gdQQ" type="text" inputmode="numeric" placeholder="QQ 号，如 123456789" style="width:200px">
-            <button class="btn" data-act="gd-create" data-key="napcat">一键建好并启动</button>
-          </div>
-          <div class="cf-help">会自动写入组件配置（端口/令牌与第②步一致）→ 建好账号 → 直接启动。</div></div>
         <div id="gdOut" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
         <div id="gdCfg" style="margin-top:10px;display:none"></div>
         <div id="gdQR" style="margin-top:10px"></div>
-        <pre id="gdLogBox" style="max-height:220px;overflow:auto;font-size:12px;
-             background:var(--bg-secondary,#f6f7f9);padding:10px;border-radius:8px;display:none"></pre>
-        <div class="cf-help" style="margin-top:14px">
-          <b>内置协议（Lagrange）由软件自带</b>，不在这里下载：装好本软件即可直接用
-          （面板 → 设置 → 运行方式 → 内部协议）。
-        </div>
+
+        <details style="margin-top:14px">
+          <summary style="cursor:pointer;font-size:13px;color:var(--text-secondary)">更多操作</summary>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <button class="btn btn-default" data-act="gd-stop" data-key="napcat">停止组件</button>
+            <button class="btn btn-default" data-act="gd-log" data-key="napcat">看日志</button>
+            <button class="btn btn-default" data-act="gd-refresh" data-key="napcat">刷新状态</button>
+          </div>
+          <pre id="gdLogBox" style="max-height:220px;overflow:auto;font-size:12px;
+               background:var(--bg-secondary,#f6f7f9);padding:10px;border-radius:8px;display:none"></pre>
+          <div class="cf-field" style="margin-top:12px"><label class="cf-label">用这串连接信息建账号（一键）</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <input id="gdQQ" type="text" inputmode="numeric" placeholder="QQ 号，如 123456789" style="width:200px">
+              <button class="btn" data-act="gd-create" data-key="napcat">一键建好并启动</button>
+            </div>
+            <div class="cf-help">会自动写入组件配置（端口/令牌与第②步一致）→ 建好账号 → 直接启动。</div></div>
+          <div class="cf-help" style="margin-top:12px">组件目录：{comp_dir}</div>
+          <div class="cf-help" style="margin-top:6px">
+            <b>内置协议（Lagrange）由软件自带</b>，不在这里下载：装好本软件即可直接用
+            （面板 → 设置 → 运行方式 → 内部协议）。
+          </div>
+        </details>
       </div>""")
 
 
