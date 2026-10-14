@@ -108,6 +108,29 @@ astercore.exe（pywebview 无边框桌面窗口 + 内嵌 RPC 通道）
 | `docs/` | 用户文档与 FAQ、质量闸门、双端对齐、插件配置 schema 等（计划书本地私有） |
 | `AGENT_SYNC.md` | 两个开发副本（本地 ↔ 服务端）之间的**交流板**：事实与决策都写在这里 |
 
+## 插件 SDK（写插件从这里开始）
+
+SDK **在仓库里、不进冻结包**（用户决定：包体保持精简；写插件请看仓库 —— 不要在 exe 里找）。
+
+| 位置 | 适用 | 说明 |
+|---|---|---|
+| `plugin-sdk/python/` | **两端通用**（Windows 桌面版 + Linux 版） | 单文件零依赖 `nap_sdk.py`：契约仍是 Linux 老一套（模块级 `handle(event)` + `utils.*`），只多三样糖 —— 规则匹配、配置三段（**一次声明，两端 WebUI 都出表单**）、离线自测与可移植性检查（`sdk.check()` 会抓 `import astercore` / 类 ctx / 硬编码 data 路径） |
+| `plugin-sdk/python/new_plugin.py` | 脚手架 | 生成插件骨架并把 SDK 一并拷过去 |
+| `plugin-sdk/python/README.md` | 指南 | 《插件开发指南》（含两端一致性要求）· `example_plugin.py` 示例 |
+| `plugin-sdk/eyuyan/` | **仅 Windows**（DLL） | 易语言 SDK：可抄进「DLL命令」的声明、源码骨架、C 桥（`nap_eyuyan_bridge.c`）、`build_msvc.bat`/`build_gcc.sh`、`check_dll_exports.py`；三条硬要求 **x64 / cdecl / 支持库**。宿主已兼容**被修饰的导出名**（`name` / `_name` / `_name@N`） |
+
+**设计底线**：SDK **不 import astercore 内部**（同一份插件代码要能在两端跑）；缺 `utils` 时只装
+**离线替身**、绝不覆盖真 `utils`（否则宿主里会静默用替身发消息）。
+
+```bash
+# 生成一个新插件（自动拷 SDK 到插件目录）
+python plugin-sdk/python/new_plugin.py my_plugin --dir plugins
+```
+
+> ⚠ **易语言那套的真机编译未验证**：开发机没有易语言、也没有 C 编译器，交付物是
+> 「材料 + C 桥源码 + 构建脚本 + 校验工具」。请在 Windows 上编出 DLL 后跑
+> `python plugin-sdk/eyuyan/check_dll_exports.py <你的.dll>` 确认导出名与 abi/name/version。
+
 ## 插件开发（Python SDK）
 
 **函数式插件**（最小）：
