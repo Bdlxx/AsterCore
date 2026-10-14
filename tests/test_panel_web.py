@@ -1259,6 +1259,29 @@ class WindowChromeTest(unittest.TestCase):
             self.assertNotIn(dead, css, "panel.css 不该再有 " + dead)
         self.assertNotIn(".db-", css, "panel.css 的 .db-* 死样式应已删除")
 
+    def test_account_pop_styles_present(self):
+        """账号浮层样式必须在（合流时被对方的旧版 panel.css 整体覆盖丢过一次）
+
+        丢了不会报错、不会崩，只会"卡片的样式悄悄消失"：浮层退回静态流 →
+        变成侧栏里一串裸文本，行也没有 hover/当前态。所以这里钉住关键几条。
+        注意 panel.css 是**双端共用主本**（Linux 侧 web/panel/panel.css），
+        改动必须两端同一份字节（见 tests/test_dual_end_assets.py / AGENT_SYNC 第 12 条）。
+        """
+        import pathlib as _pl
+        css = (_pl.Path(__file__).resolve().parent.parent / "src" / "astercore" / "web" / "static" /
+               "panel.css").read_text(encoding="utf-8")
+        for need, why in (
+                (".acct-pop{", "浮层要成卡片（丢了就变成侧栏里的一串裸文本）"),
+                ("position:absolute", "浮层要绝对定位才能贴着账号卡向右弹出"),
+                (".acct-pop[hidden]", "浮层关闭时要真的隐藏"),
+                (".acct-pop .acct-row{", "浮层里的行要撑满宽度"),
+                (".acct-row{", "行基础样式（对齐/内边距/圆角）"),
+                (".acct-row:hover", "行要有 hover 反馈"),
+                (".acct-row.active", "当前账号行要高亮"),
+                (".a-name", "行里的名称/副标题样式"),
+        ):
+            self.assertIn(need, css, "panel.css 缺 " + need + "：" + why)
+
     def test_rpc_registered(self):
         self.assertIn('_reg_rpc(hub, "/api/app/window"', self.launch)
         for action in ("minimize", "hide", "quit"):

@@ -103,3 +103,30 @@ python plugin-sdk/eyuyan/check_dll_exports.py --dll 你的插件.dll
 C / C++ / Rust 模板已经在仓库里验证过能产出合规 DLL；易语言的**导出名与 cdecl**只能在你的
 易语言环境里最终确认（本机没有易语言、也没有 C 编译器，无法代跑）。所以本文档 + 声明 + 骨架
 + C 桥 + 校验脚本是一套"你那边照做就能出合规 DLL"的完整材料，**最后一步真机验证需要你**。
+
+## 九、真机编译实测（2026-10-15，Windows 11 x64）
+
+第一次在**真机**上把这两样编出来并验过（此前只有"材料"，没有实测记录）：
+
+**toolchain 怎么来的**：这台机器上没有 MSVC（`cl`）也没有 MinGW（`gcc`）。用 pip 装了一个
+自带编译器与 Windows 头的包即可，**不用装 Visual Studio**：
+
+```bat
+python -m pip install ziglang
+rem 编 C 示例插件（-I 指向仓库里的 plugin-sdk，nap_plugin.h 在那儿）
+python -m ziglang cc -target x86_64-windows-gnu -shared -O2 -I ..\.. -o nap_hello.dll nap_hello.c
+rem 编本目录的 C 桥
+python -m ziglang cc -target x86_64-windows-gnu -shared -O2 -o nap_bridge.dll nap_eyuyan_bridge.c
+```
+
+**实测结果**：
+
+- `nap_hello.dll`（187,392 B）→ `check_dll_exports.py`：6 个必需导出**全在且名字无修饰**，
+  `abi_version=1`、`name=nap_hello`、`version=0.1.0`；放进 `<实例>/plugins/` 后宿主 `native.py`
+  按同一套候选名找到符号并真的处理了事件（`tests/test_native.py` 那 3 条从 skip 变成真跑）。
+- `nap_bridge.dll`（186,368 B）→ 用 Python `ctypes` 当宿主做**功能往返**：`NapApi` 实测 40 字节
+  （与本文档偏移表一致）、`init(NULL)=-1` / `init(api,1)=0` / `init(api,2)=-2`、
+  `abi_check()=1`、`nap_bridge_action` 的回体与 `nap_bridge_log` 的回调都按预期到达、`free` 被调用一次。
+
+⇒ **C 桥与 C 示例这条链已在真机跑通；只有"易语言自己编出来的插件 DLL"还需要在你的易语言里走一遍**
+（导出名/Cdecl/公开子程序这些只有易语言编译器说了算），编完照旧跑 `check_dll_exports.py` 核对。
