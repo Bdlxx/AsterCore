@@ -381,6 +381,19 @@ function installWindowChrome() {
   }
   [document.querySelector('.header'), document.querySelector('.header-breadcrumb')]
     .forEach(function (el) { if (el) el.classList.add('pywebview-drag-region'); });
+  /* 双击顶栏（拖动区）＝ 最大化/还原：无边框窗口没有系统最大化按钮。
+     ⚠ 必须挂在**真的存在且可见**的拖动区上：以前这句挂在 #desktopBar 上，而那段标记
+     在本文件里位于 panel.js 之后才解析，`getElementById` 拿到 null 就直接 return，
+     双击一直没生效（和"三按钮不显示"是同一个坑）。 */
+  const header = document.querySelector('.header');
+  if (header) {
+    header.addEventListener('dblclick', function (e) {
+      const t = e.target;
+      if (!t) return;
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.closest('button') || t.closest('a')) return;
+      post('/api/app/window', { action: 'maximize' });
+    });
+  }
   const box = document.createElement('span');
   box.id = 'winCtl';
   box.className = 'win-ctl';
@@ -1141,17 +1154,6 @@ PANEL.endpoints.page = function (p) {
   }
   return url;
 };
-
-/* 无边框窗口：双击顶栏的拖动区 = 最大化/还原（系统最大化按钮已不存在） */
-(function () {
-  var bar = document.getElementById('desktopBar');
-  if (!bar) { return; }
-  bar.addEventListener('dblclick', function (e) {
-    if (e.target && e.target.tagName === 'BUTTON') { return; }   /* 点按钮不算双击标题栏 */
-    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'A')) { return; }
-    post('/api/app/window', { action: 'maximize' });
-  });
-})();
 
 PANEL.start();
 
