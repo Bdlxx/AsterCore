@@ -45,7 +45,9 @@ def main(verbose: bool) -> int:
     pages = text(ROOT / "src" / "astercore" / "web" / "ui_pages.py")
     where = {
         "index.html": ("desktopBar", "acctOverlay", "dbWinMin", "dbWinHide", "dbWinQuit"),
-        "panel.js": ("botAvatar", "botName", "botSub"),
+        # panel.js 的外壳元素**按实际结构判断**（本地线改版后 botName/botSub 已不存在，
+        # 写死 id 就会误报 —— 这里改成"存在头像元素 + 存在身份文本区"）
+        "panel.js": ("botAvatar",),
         "ui_pages.py": ("acctDlg", "ac_id", "ac_ws", "ac_http", "ac_token", "gdQQ",
                         "sp_mode", "sp_port", "rt_mode", "upBox", "upBarFill"),
     }
@@ -97,6 +99,14 @@ def main(verbose: bool) -> int:
     ver = ver.group(1) if ver else "?"
     check("pyproject 版本一致", f'version = "{ver}"' in text(ROOT / "pyproject.toml"), ver)
     check("version_info 版本一致", f'"{ver}"' in text(ROOT / "pack" / "version_info.txt"), ver)
+
+    # 8.5) 外壳的身份区按**结构**判断（不写死 id，改名/改版都不误报）
+    m = re.search(r"SHELL_HTML\s*=\s*\"(.*?)\";", js, re.S)
+    shell_ids = set(re.findall(r'id=\\+"([A-Za-z0-9_-]+)', m.group(1))) if m else set()
+    check("外壳有头像元素", any("avatar" in i.lower() for i in shell_ids), str(sorted(shell_ids))[:120])
+    check("外壳有身份文本区（名称/副标题任一）",
+          any(("name" in i.lower() or "sub" in i.lower()) for i in shell_ids),
+          str(sorted(shell_ids))[:120])
 
     # 9) 共用文件：本地存在且能被 Linux 端对上（跨仓比对交给 mybot2 的 test_dual_end_assets）
     for shared in ("panel.js", "panel.css", "cfg_form.js", "cfg_form.css"):
