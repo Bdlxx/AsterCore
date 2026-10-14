@@ -25,6 +25,12 @@ else()
   add_compile_options(-finput-charset=UTF-8 -fexec-charset=UTF-8)
 endif()
 
+# MinGW：必须把运行库静态链进去（-static）。只用 -static-libgcc -static-libstdc++ 时，
+# posix 线程模型的 GCC 仍会拖 libwinpthread-1.dll → DLL 加载报"找不到模块或它的依赖" ✗
+if(MINGW)
+  add_link_options(-static)
+endif()
+
 add_library(nap_sdk INTERFACE)
 target_include_directories(nap_sdk INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}          # nap_plugin.hpp

@@ -40,7 +40,13 @@ def _compiler_candidates() -> list[list[str]]:
     out: list[list[str]] = []
     env = os.environ.get("ASTERCORE_CXX")
     if env:
-        out.append(shlex.split(env))
+        # ⚠ Windows 路径里有反斜杠：posix 模式会把 `\U`、`\t` 之类当转义吞掉
+        # （`C:\Users\...` → `C:Users...`）→ 起不来还报"系统找不到指定的文件"。用非 posix 模式。
+        try:
+            parts = shlex.split(env, posix=False)
+        except ValueError:
+            parts = [env]
+        out.append([p.strip('"') for p in parts if p.strip()])
     try:
         import ziglang  # noqa: F401
         out.append([sys.executable, "-m", "ziglang", "c++"])
@@ -206,12 +212,30 @@ class CppSdkBuildTest(unittest.TestCase):
         out = cls.dir / "probe.exe"
         r = cls._compile(cc, out, src, shared=False)
         if r.returncode != 0:
-            first = _tail(r, 1)
-            return False, f"编不过（{first}）"
+            return False, "编不过：\n      " + _tail(r, 3).replace("\n", "\n      ")
         machine = _pe_machine(out)
         if machine != _X64:
             return False, f"产出不是 x64（PE 机器码 {hex(machine) if machine else '未知'}）"
-        return True, "能产出 x64 ✓"
+        # 再编一个**用到 C++ 运行库**的小 DLL 并当场加载 —— 这一步专门抓
+        # "少了静态链接运行库"这类坑（例：MinGW 的 posix 线程模型会拖 libwinpthread-1.dll，
+        # 编得出来、宿主却加载不了；run #52/#53 第 6 步就是这么红的）
+        dll_src = cls.dir / "probe_dll.cpp"
+        dll_src.write_text(
+            "#include <string>\n#include <cstddef>\n"
+            'extern "C" __declspec(dllexport) std::size_t probe_len(void) {\n'
+            '    std::string s = "probe";\n'
+            "    return s.size();\n"
+            "}\n", encoding="utf-8")
+        dll = cls.dir / "probe_dll.dll"
+        r2 = cls._compile(cc, dll, dll_src, shared=True)
+        if r2.returncode != 0:
+            return False, f"编 DLL 不过（{_tail(r2, 1)}）"
+        try:
+            import ctypes
+            ctypes.CDLL(str(dll))
+        except OSError as e:
+            return False, f"编得出 DLL 但**加载不了**（多半是没静态链接运行库：{e}）"
+        return True, "能产出 x64 且 DLL 可加载 ✓"
 
     @classmethod
     def _compile(cls, cc: list[str], out: Path, src: Path, *, shared: bool) -> subprocess.CompletedProcess:
@@ -231,9 +255,12 @@ class CppSdkBuildTest(unittest.TestCase):
         else:
             # ⚠ -m64：明确要 64 位产物（32 位 DLL 加载必失败，别让它"编成功却不能用"）
             # ⚠ -fexec-charset=UTF-8：中文字面量必须走 UTF-8，否则关键词匹配永远失败
-            # ⚠ -static-libgcc/-static-libstdc++：DLL 自带运行库，CI 上不依赖 PATH 里的 libstdc++-6.dll
+            # ⚠ -static：**不是** -static-libgcc/-static-libstdc++。MinGW（winlibs / MSYS2）多用
+            #    posix 线程模型，那两个开关**不会**把 libwinpthread-1.dll 静态链进去 →
+            #    产物编得出来、宿主却"找不到模块或它的依赖"加载失败 ✗（run #52/#53 第 6 步就这个）。
+            #    用 -static 一次把 libgcc/libstdc++/winpthread 全静态化 ✓（只留系统 DLL）。
             cmd += ["-m64", "-std=c++11", "-O1", "-finput-charset=UTF-8", "-fexec-charset=UTF-8",
-                    "-static-libgcc", "-static-libstdc++",
+                    "-static",
                     "-I", str(ROOT / "plugin-sdk"), "-I", str(SDK_DIR)]
             if shared:
                 cmd += ["-shared"]

@@ -4,7 +4,9 @@
 // 编译（任选其一，必须 **x64**）：
 //   cl /nologo /LD /O2 /std:c++14 /I "..\.." /Fe:nap_hello_cpp.dll hello_plugin.cpp
 //   python -m ziglang c++ -target x86_64-windows-gnu -shared -O2 -I "..\.." -o nap_hello_cpp.dll hello_plugin.cpp
-//   g++ -shared -O2 -I../.. hello_plugin.cpp -o nap_hello_cpp.dll -static-libgcc -static-libstdc++
+//   g++ -shared -O2 -m64 -I../.. hello_plugin.cpp -o nap_hello_cpp.dll -static   ← 必须 -static
+//     （-static-libgcc -static-libstdc++ 不够：posix 线程模型的 MinGW 还会拖 libwinpthread-1.dll，
+//       加载时报"找不到模块或它的依赖"）
 //
 // 装法：把 nap_hello_cpp.dll 放进 <实例>/plugins/ ，面板「运行日志」里应出现
 //       「已登记原生插件 nap_hello_cpp」。

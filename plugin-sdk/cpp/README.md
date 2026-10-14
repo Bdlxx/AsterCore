@@ -61,10 +61,15 @@ python -m ziglang c++ -target x86_64-windows-gnu -shared -O2 -fexec-charset=UTF-
 ### MinGW / GCC
 
 ```sh
-g++ -shared -O2 -fexec-charset=UTF-8 -I.. -I. hello_plugin.cpp -o nap_hello_cpp.dll \
-    -static-libgcc -static-libstdc++
+g++ -shared -O2 -m64 -fexec-charset=UTF-8 -I.. -I. hello_plugin.cpp -o nap_hello_cpp.dll -static
 ```
-（`-static-libgcc -static-libstdc++` 把 GCC 运行库链进 DLL，免得别人机器上少 DLL。）
+
+> ⚠ **必须是 `-static`，不是 `-static-libgcc -static-libstdc++`**。winlibs / MSYS2 的 GCC 多用
+> **posix 线程模型**，那两个开关**不会**把 `libwinpthread-1.dll` 静态链进去 → DLL 编得出来，
+> 但加载时报「找不到模块或它的依赖」✗（冻结版宿主是 x64 进程，加载失败就是"插件装不进去"）。
+> `-static` 一次把 libgcc / libstdc++ / winpthread 全静态化，产物只剩系统 DLL ✓。
+> 这条有回归测试看着：`tests/test_cpp_sdk.py::CppSdkBuildTest`（探针会试编一个用到 C++ 运行库的
+> 小 DLL 并当场加载，加载不了就直接判这条工具链不合格）。
 
 ### CMake（把 SDK 当 INTERFACE 库用）
 
@@ -137,5 +142,5 @@ rem 3) 放进 <实例>\plugins\ ，面板「运行日志」应出现：已登记
 | 加载失败 / 面板报位数不符 | 编成了 **32 位**（要 x64；`-target x86_64-windows-gnu` 或 x64 工具链） |
 | 插件加载了但"什么都不做" | 中文字面量没按 UTF-8（MSVC 加 `/utf-8`；GCC/Clang 加 `-fexec-charset=UTF-8`） |
 | 报"缺少导出符号" | 用了 C++ 名字修饰（必须 `extern "C"`）或没写 `NAP_PLUGIN(你的类)` |
-| 换台机器跑不起来 | MSVC 用了 `/MD` 或 MinGW 没加 `-static-lib*` → 缺运行库 |
+| 换台机器跑不起来 / 加载报"找不到模块或它的依赖" | MSVC 用了 `/MD`（要 `/MT`），或 MinGW 只加了 `-static-lib*`（**要 `-static`**，否则会拖 `libwinpthread-1.dll`） |
 | 一收事件就崩 | 别在 `on_event` 里抛异常/长阻塞；SDK 只保证"JSON 坏了不崩"（返回 2） |
