@@ -716,6 +716,146 @@ def _install_command_registry(pkg: types.ModuleType) -> types.ModuleType:
     return m
 
 
+# ---------------------------------------------------------------- http_client
+# 命令说明（键 = "插件键.命令键"，与 Linux 侧 build_command_table 的 descs 对齐）
+_CMD_DESC: dict[str, str] = {
+    "wordlib.add": "添加词条（两步或一步）",
+    "wordlib.delete": "删除词条",
+    "wordlib.query": "查询词条",
+    "wordlib.encode": "转码消息",
+    "wordlib.sign1": "每日签到",
+    "wordlib.sign2": "每日签到（简写）",
+    "wordlib.nickname": "设置自定义昵称",
+    "wordlib.rank": "签到排行榜",
+    "wordlib.praise1": "让机器人赞你",
+    "wordlib.add_fuzzy": "添加模糊匹配词条",
+    "wordlib.enable": "本群开启词库",
+    "wordlib.disable": "本群关闭词库",
+    "jm_downloader.download": "下载本子并转PDF分享（例：jm 123456；多本 jm 123 456；单章 jm 123 p456）",
+    "jm_downloader.detail": "查看本子元信息（例：jm详情 123456）",
+    "jm_downloader.enable": "本群开启JM下载（仅主人）",
+    "jm_downloader.disable": "本群关闭JM下载（仅主人）",
+}
+
+
+def _install_http_client(pkg: types.ModuleType) -> types.ModuleType:
+    """utils.http_client —— 通用 HTTP 工具（Linux 侧那份用 requests 实现）。
+
+    为什么这里换成 stdlib（urllib）：Windows 包里 requests 是**可选**依赖
+    （components.probe_endpoint 也是 try-import），插件不该因为缺它就在 import 期炸。
+    API、返回值与异常语义与 Linux 那份保持一致：`HttpError(message, status_code)`。
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    import socket                      # 仅用于把超时异常归一成 HttpError
+
+    m = types.ModuleType("utils.http_client")
+    m.TIMEOUT = 10
+
+    class HttpError(Exception):
+        """HTTP 请求异常（与 Linux 侧同名同签名）"""
+
+        def __init__(self, message: str, status_code: int = 0) -> None:
+            self.status_code = status_code
+            super().__init__(message)
+
+    def _call(method: str, url: str, *, params: dict | None = None, data: dict | None = None,
+              headers: dict | None = None, timeout: float | None = None):
+        t = timeout or m.TIMEOUT
+        target = str(url)
+        if params:
+            q = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+            target = f"{target}{'&' if '?' in target else '?'}{q}"
+        hdrs = dict(headers or {})
+        body = None
+        if data is not None:
+            body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            hdrs.setdefault("Content-Type", "application/json")
+        req = urllib.request.Request(target, data=body, headers=hdrs, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=t) as resp:   # noqa: S310 地址由插件给
+                raw = resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            raise HttpError(f"HTTP {e.code}: {str(e)[:100]}", status_code=int(e.code)) from e
+        except (TimeoutError, socket.timeout) as e:
+            raise HttpError(f"{method} 请求超时: {str(url)[:60]}", status_code=0) from e
+        except (urllib.error.URLError, OSError) as e:
+            raise HttpError(f"{method} 请求失败: {str(e)[:100]}", status_code=0) from e
+        try:
+            return json.loads(raw)
+        except ValueError as e:
+            raise HttpError(f"响应不是合法 JSON: {str(e)[:100]}", status_code=0) from e
+
+    def http_get(url: str, params: dict | None = None, headers: dict | None = None,
+                 timeout: float | None = None):
+        """GET 并解析 JSON；失败抛 HttpError"""
+        return _call("GET", url, params=params, headers=headers, timeout=timeout)
+
+    def http_post_json(url: str, data: dict | None = None, headers: dict | None = None,
+                       timeout: float | None = None):
+        """POST JSON 并解析 JSON 响应；失败抛 HttpError"""
+        return _call("POST", url, data=data, headers=headers, timeout=timeout)
+
+    m.HttpError = HttpError
+    m.http_get = http_get
+    m.http_post_json = http_post_json
+    _bind(m, pkg, "http_client")
+    return m
+
+
+# ---------------------------------------------------------------- command_table
+def _install_command_table(pkg: types.ModuleType) -> types.ModuleType:
+    """utils.command_table —— 由各插件配置里的 `commands` 生成命令表文本。
+
+    Linux 侧 main.py 启动时会 `build_command_table(bot_name=...)`；那份实现把
+    数据目录写死成仓库下的 data/ 且硬编码了 5 个插件的说明。这里改成**数据驱动**：
+    数据目录走当前账号（`<instance>/data`），插件清单复用 PLUGIN_META_DEFAULT，
+    说明表在 _CMD_DESC —— 输出对已知插件与 Linux 一致，对新插件自动生效。
+    """
+    m = types.ModuleType("utils.command_table")
+
+    def _read_json(path: Path) -> dict:
+        try:
+            if path.is_file():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return data if isinstance(data, dict) else {}
+        except Exception as e:                  # noqa: BLE001 单份配置坏了不该整表挂掉
+            log.debug("命令表读取 %s 失败: %s", path, e)
+        return {}
+
+    def build_command_table(bot_name: str = "", data_dir: str | Path | None = None) -> str:
+        rt = _rt(None)
+        d = Path(data_dir) if data_dir is not None else (_data_dir(rt) or Path("data"))
+        name = str(bot_name or "").strip()
+        if not name:
+            try:
+                name = str(pkg.config.get_bot_name() or "")
+            except Exception:                   # noqa: BLE001
+                name = ""
+        lines = [f"===== {name or '机器人'} 命令表 =====", ""]
+        for key, meta in PLUGIN_META_DEFAULT.items():
+            cfg = _read_json(d / str(meta.get("config_file") or ""))
+            cmds = cfg.get("commands") or {}
+            if not isinstance(cmds, dict) or not cmds:
+                continue
+            lines.append(f"【{meta.get('name_cn') or key}】")
+            for ck, ctext in cmds.items():
+                desc = _CMD_DESC.get(f"{key}.{ck}") or ""
+                lines.append(f"  {ctext}  — {desc}" if desc else f"  {ctext}")
+            lines.append("")
+        lines += ["【分群开关说明】",
+                  "  所有插件在每个群默认关闭，需在群内发送对应开启命令",
+                  "  私聊发送开启/关闭命令 = 全局控制",
+                  "",
+                  f"===== 共 {len(lines)} 行 ====="]
+        return "\n".join(lines)
+
+    m.build_command_table = build_command_table
+    _bind(m, pkg, "command_table")
+    return m
+
+
 # ---------------------------------------------------------------- 装配
 
 def _bind(mod: types.ModuleType, pkg: types.ModuleType, name: str) -> None:
@@ -749,6 +889,8 @@ def install() -> types.ModuleType:
         _install_ws(pkg)
         _install_plugin_toggle(pkg)
         _install_command_registry(pkg)
+        _install_command_table(pkg)
+        _install_http_client(pkg)
         _installed = True
         log.info("已注入 utils 兼容层（老插件可直接运行）")
         return pkg

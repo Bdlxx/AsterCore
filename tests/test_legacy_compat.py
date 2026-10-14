@@ -537,3 +537,86 @@ class CacheMigrationTest(unittest.TestCase):
         self.assertEqual(r["migrated"], 0)
         self.assertIn("不存在", r["reason"])
 
+
+class UtilsSdkSurfaceTest(unittest.TestCase):
+    """Python SDK（Linux 版 `utils/`）在 Windows 侧必须**逐模块齐备**。
+
+    依据 Linux 仓库（Bdlxx/NapCat-WordLibBot）的《插件开发 SDK》：
+    插件 `import utils.*` 就能拿到 api / config / log / plugin_toggle / command_registry
+    / command_table / http_client / ws —— 少一个，老插件在 Windows 上就是 import 期直接炸。
+    这条测试把"清单"钉住，避免再出现"线上插件跑不了但没人知道"。
+    """
+
+    # 与 Linux 仓库 utils/ 目录一一对应（新增子模块时两边都要加）
+    LINUX_UTILS_MODULES = ("api", "command_registry", "command_table", "config",
+                           "http_client", "log", "plugin_toggle", "ws")
+
+    def test_every_linux_utils_module_exists(self):
+        pkg = compat_install()
+        missing = [n for n in self.LINUX_UTILS_MODULES
+                   if not hasattr(pkg, n) or sys.modules.get(f"utils.{n}") is None]
+        self.assertEqual(missing, [], f"Windows 兼容层缺 utils 子模块：{missing}")
+
+    def test_http_client_roundtrip_local(self):
+        """真跑一次本地 HTTP：GET 带参数 / POST JSON / 404 → HttpError"""
+        import http.server
+        import threading
+
+        class _H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):          # 别把访问日志打到测试输出
+                pass
+
+            def do_GET(self):
+                body = json.dumps({"path": self.path, "q": self.path.split("?", 1)[-1]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(n) or b"{}")
+                body = json.dumps({"got": data, "ctype": self.headers.get("Content-Type")}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), _H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        port = srv.server_address[1]
+        try:
+            pkg = compat_install()
+            hc = pkg.http_client
+            got = hc.http_get(f"http://127.0.0.1:{port}/api", params={"a": 1, "b": "x"})
+            self.assertEqual(got["path"], "/api?a=1&b=x")
+            posted = hc.http_post_json(f"http://127.0.0.1:{port}/api", data={"n": 2})
+            self.assertEqual(posted["got"], {"n": 2})
+            self.assertEqual(posted["ctype"], "application/json")
+            with self.assertRaises(hc.HttpError):
+                hc.http_get("http://127.0.0.1:1/none")          # 连不上 → HttpError
+            self.assertTrue(issubclass(hc.HttpError, Exception))
+            self.assertEqual(hc.TIMEOUT, 10)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_command_table_builds_from_configs(self):
+        """命令表按各插件配置里的 commands 生成（新插件自动生效）"""
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            (d / "wordlib_config.json").write_text(json.dumps({
+                "commands": {"sign1": "签到", "rank": "签到排行"},
+            }, ensure_ascii=False), encoding="utf-8")
+            (d / "unknown_plugin_config.json").write_text(json.dumps({
+                "commands": {"hello": "打招呼"},
+            }, ensure_ascii=False), encoding="utf-8")
+            pkg = compat_install()
+            table = pkg.command_table.build_command_table(bot_name="测试机", data_dir=d)
+            self.assertIn("===== 测试机 命令表 =====", table)
+            self.assertIn("签到", table)
+            self.assertIn("每日签到", table)                    # 已知插件的说明补上了
+            self.assertIn("分群开关说明", table)
+            self.assertIn("共 ", table)
