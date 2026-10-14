@@ -117,19 +117,31 @@ SDK **在仓库里、不进冻结包**（用户决定：包体保持精简；写
 | `plugin-sdk/python/` | **两端通用**（Windows 桌面版 + Linux 版） | 单文件零依赖 `nap_sdk.py`：契约仍是 Linux 老一套（模块级 `handle(event)` + `utils.*`），只多三样糖 —— 规则匹配、配置三段（**一次声明，两端 WebUI 都出表单**）、离线自测与可移植性检查（`sdk.check()` 会抓 `import astercore` / 类 ctx / 硬编码 data 路径） |
 | `plugin-sdk/python/new_plugin.py` | 脚手架 | 生成插件骨架并把 SDK 一并拷过去 |
 | `plugin-sdk/python/README.md` | 指南 | 《插件开发指南》（含两端一致性要求）· `example_plugin.py` 示例 |
-| `plugin-sdk/eyuyan/` | **仅 Windows**（DLL） | 易语言 SDK：可抄进「DLL命令」的声明、源码骨架、C 桥（`nap_eyuyan_bridge.c`）、`build_msvc.bat`/`build_gcc.sh`、`check_dll_exports.py`；三条硬要求 **x64 / cdecl / 支持库**。宿主已兼容**被修饰的导出名**（`name` / `_name` / `_name@N`） |
+| `plugin-sdk/cpp/` | **仅 Windows（原生 DLL）** | 单头文件 `nap_plugin.hpp`（C++11、零第三方依赖）：一行 `NAP_PLUGIN(你的类)` 生成全部 6 个导出；自带 `nap::Json`（含 `\uXXXX` 与代理对、深度上限、数字往返不丢精度）、`nap::Event`（取值/关键词/@我）、`nap::Host`（动作/日志/配置）与 `send_group`/`send_private`/`seg_text`/`seg_image`/`seg_at`/`logf`。配 `CMakeLists.txt`（INTERFACE 库 `nap_sdk`）、`build_msvc.bat` / `build_zig.bat`、`example/hello_plugin.cpp`（30 行完整示例）、`tests/test_sdk.cpp`（SDK 自测） |
 
 **设计底线**：SDK **不 import astercore 内部**（同一份插件代码要能在两端跑）；缺 `utils` 时只装
 **离线替身**、绝不覆盖真 `utils`（否则宿主里会静默用替身发消息）。
 
 ```bash
+# C++ 原生插件：有 VS 时
+cl /LD /O2 /MT /utf-8 /I plugin-sdk /I plugin-sdk/cpp /Fe:你的插件.dll 你的插件.cpp
+# 没有 VS：python -m pip install ziglang 后跑 plugin-sdk/cpp/build_zig.bat
+
 # 生成一个新插件（自动拷 SDK 到插件目录）
 python plugin-sdk/python/new_plugin.py my_plugin --dir plugins
 ```
 
-> ⚠ **易语言那套的真机编译未验证**：开发机没有易语言、也没有 C 编译器，交付物是
-> 「材料 + C 桥源码 + 构建脚本 + 校验工具」。请在 Windows 上编出 DLL 后跑
-> `python plugin-sdk/eyuyan/check_dll_exports.py <你的.dll>` 确认导出名与 abi/name/version。
+> ⚠ **原生插件两条硬要求**（不满足会静默出问题）：
+> ① **必须 x64** —— 宿主进程是 x64，32 位 DLL **装不进去**（这也是易语言那一支被整体删除的原因：
+> 易语言本体只能编 32 位；需要它请走 32 位桥接子进程或改用火山PC）。
+> ② **必须开 UTF-8** —— MSVC 加 `/utf-8`，GCC/Clang 加 `-fexec-charset=UTF-8`；
+> 否则中文字面量按系统 ANSI(GBK) 编，`has_keyword("你好")` **永远匹配不上且毫无报错**。
+> SDK 里有 `nap::utf8_literals_ok()`，`init` 时会打 error 日志点名。
+>
+> 另：**事件形状**两种都认 —— 原生插件拿到的是 `type/raw/segments`（ABI 草案 §5），
+> 老插件（Python legacy）是 OneBot 形状（`post_type/raw_message/message`）。
+>
+> 校验 DLL：`python plugin-sdk/tools/check_dll_exports.py <你的.dll>`（6 个必需导出 / ABI / name / version）。
 
 ## 插件开发（Python SDK）
 

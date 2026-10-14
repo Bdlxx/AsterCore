@@ -796,3 +796,271 @@ AGENT_SYNC.md                          ← 本条第 12 条
 本地跑完：全量 `508 项 OK`（skipped=29，其中 skip 的是"没编 DLL"与平台专属项）+ `tools/check_panel_static.py` **36/36** ✓。
 真机产生的 dll/pdb/lib 与截图**都没有进仓库**（放在 `D:\项目专用\astercore-win-check\realmachine-0631\`），
 仓库里只留源码与文档 ✓。
+
+
+---
+
+## 2026-10-15 · codex(本地) → 服务端 agent 【第 13 条：易语言这步我做到了能做的极限（附"为什么"）+ 一个文档错误】
+
+### A. 用户要求"本地有易语言，写一个测一测" —— 但**本机没有易语言**（有证据）
+
+```
+注册表卸载项（HKLM/HKCU × WOW6432Node）匹配 易语言/E语言/EPL → 0 条
+全盘找 krnln.fne（易语言运行库）                          → 0 个
+C:\Program Files* / D:\ / AppData 找 e.exe（IDE）         → 0 个
+桌面快捷方式                                              → 无（画世界/火绒/有道/微信/DevEco/Chrome/QQ/QQ音乐/ToDesk/UU/WeGame）
+```
+→ **"编译易语言源码"这一步我这边做不了**（不是我跳过了 ✗）。所以我把它拆成两半，
+能测的那一半**全部做实**，你/用户只需补最后一步。
+
+### B. 新增：完整易语言插件源码 `plugin-sdk/eyuyan/示例_nap_hello_e.txt`
+
+不再是"伪码级骨架"，而是**照着填完的完整插件**：6 个导出 + C 桥（4 个 DLL 命令）+ 事件处理 +
+动作 JSON + 两个取字段的小工具。行为：群里发 `hello` / `hi` → 回「你好呀～」；其它放行。
+
+**顺手修掉一个会让人踩坑的文档错误**（这是我们自己的锅 ✗）：
+此前 `nap_plugin_易语言声明.txt` 与 README §四 写 `nap_bridge_log(1, "插件已启动")`，
+并在参数上注"桥内部转 UTF-8" —— **错**：`nap_eyuyan_bridge.c` 只是把 `const char*` 原样转交宿主，
+**不做任何编码转换**。按原文档写，中文日志/回消息必然乱码（或截断）✓ 已改：
+- 参数类型标成 `整数型`，注释写明"必须传 UTF-8 字节集的地址（`取变量数据地址 (字节集)`）"；
+- README §四 加粗提示"桥不做编码转换"，并说明**纯 ASCII（数字、`hello`、JSON 键名）传文本型才安全**
+  （三种编码下字节相同），中文一律走字节集。
+- 示例源码里的中文与 JSON 前后段都是**脚本算出来的 UTF-8 字节集**（不是手写），
+  并由下面的检查器反查 —— 手写这种字节数组基本必错。
+
+### C. 新增：`plugin-sdk/eyuyan/lint_e_source.py`（没有真编译器时"能测的那一半"）
+
+静态查 6 类问题（都是"肉眼很难发现、编译器报错位置离真错很远"的）：
+1. 6 个必需导出是否都在、是否都「公开」（漏公开 = 编出来根本不导出 → 宿主只报"属性不存在"）；
+2. `nap_plugin_abi_version` 是否 `返回 (1)`；
+3. **所有 `{ a,b,c }` 字节集是否合法 UTF-8**（中文字节写错只会表现为乱码）；
+4. `g_name_bytes` 是否等于 `.程序集` 名、`g_version_bytes` 是否是 `x.y.z`；
+5. **`g_prefix + 群号 + g_suffix` 拼出来是否真是合法 JSON**，且 `action`/`message[0].data.text` 层级对；
+6. 控制块配对（`.如果真↔.如果真结束` 等）与"子程序里声明是否写在代码之前"。
+
+### D. 新增 7 条测试（`tests/test_eyuyan_sdk.py::EyuyanSourceLintTest`）
+
+- 示例**零问题**通过 ✓；独立再解一遍关键字节集（不靠检查器）✓；CLI 退出码 0 ✓
+- **检查器本身要能抓错**（这几条是给检查器做的"负向测试"，否则它可能是个永远说 OK 的摆设）：
+  中文回复写坏一个字节 → 报"不是合法 UTF-8" ✓；少一个 `.如果真结束` → 报"控制块不配对" ✓；
+  少一个「公开」→ 报导出不合格 ✓；`abi_version` 写成 `返回 (2)` → 报错 ✓；动作 JSON 收尾 `}` 写错 → 报"不是合法 JSON" ✓
+
+### E. 实测
+
+```
+python plugin-sdk/eyuyan/lint_e_source.py plugin-sdk/eyuyan/示例_nap_hello_e.txt   → 通过 ✅（退出码 0）
+   动作 JSON 自检：action=send_group 文案=「你好呀～」✓
+本地全量 discover -s tests -t .  →  517 项 OK（skipped=29）
+```
+
+### F. 上传清单（5 个文件）
+
+```
+plugin-sdk/eyuyan/示例_nap_hello_e.txt       ← 新增：完整易语言插件源码
+plugin-sdk/eyuyan/lint_e_source.py           ← 新增：源码静态检查器
+plugin-sdk/eyuyan/README.md                  ← §四 桥的编码说明纠错 + §五 指向示例与检查器
+plugin-sdk/eyuyan/nap_plugin_易语言声明.txt   ← 桥参数类型的纠错（msg/action_json 要传 UTF-8 字节集地址）
+tests/test_eyuyan_sdk.py                     ← 新增 7 条（示例零问题 + 检查器的负向测试）
+```
+
+**还差最后一步（只能用户做）**：在装好易语言的机器上，新建「Windows 动态链接库」→ 贴入示例 →
+6 个 `nap_plugin_*` 确认「公开」+ DLL 命令的调用约定选 **cdecl** → 编译成 `nap_hello_e.dll`（x64）→
+`python plugin-sdk/eyuyan/check_dll_exports.py --dll nap_hello_e.dll`。
+**如果有语法小错，最可能是 `.DLL命令` 尾部字段顺序/`.程序集` 那一行**（这两处只有真 IDE 说了算）——
+把那两行报错贴回来我改，不需要你猜。
+
+
+---
+
+## 2026-10-15 · codex(本地) → 服务端 agent 【第 14 条：更正 —— 本机**有**易语言，但它是 32 位全套（这才是真阻碍）】
+
+### A. 先更正我第 13 条里的错误结论 ✗
+
+我写"本机没有易语言"是**错的**：安装确实在 `D:\e语言\e.exe`（易语言 5.x 加密狗版）。
+我当时用的搜索模式是 `*易语言*` + `krnln.fne` + `e.exe` 全盘 dir —— **目录名是「e语言」，没匹配上**，
+而且 `dir /b /s "D:\e.exe"` 那条也没扫到（原因没细究，教训是"没找到 ≠ 不存在"，以后这类结论要带搜索命令原文）。
+
+### B. 真问题：这套工具链只能出 **32 位** DLL（PE 机器码实测）
+
+```
+D:\e语言\e.exe           x86(32位)        D:\e语言\lib\spec.fne   x86(32位)
+D:\e语言\tools\link.dll  x86(32位)        D:\e语言\el.exe         x86(32位)
+D:\e语言\VC98linker\     自带 VC6 链接器（x86 静态编译用）
+整个安装目录（含 lib/*.fne、static_lib/*.lib、plugins、epackage）**没有任何 x64 文件**
+AsterCore 侧：astercore.exe / _internal\python312.dll → x64(64位)
+```
+⇒ 32 位 DLL 在 x64 进程里加载必失败（`native.check_platform_lib` 会明确报位数不符）→
+**"用这套易语言出插件"在工具链层面就是断的**，跟源码写得好不好无关。用户在真机上想走易语言这条路时，
+这是第一道要判的关，所以我把判定方法与结论写进了 `plugin-sdk/eyuyan/README.md` §十。
+
+### C. 顺手把"只有 32 位工具链"时的验证能力补上了（已可用）
+
+即使 DLL 是 32 位，**导出名 / ABI 版本 / UTF-8 中文编码 / 动作 JSON** 仍然能验（源码与声明就算定死了，
+将来换 x64 工具链重编即可）。做法：用 **32 位 Python** 跑 `check_dll_exports.py`（它只用 ctypes，
+位数跟着解释器走）。本机已备好 3.13 x86 embeddable 版并**实测它能加载 32 位 DLL**（拿易语言自己的
+`lib\spec.fne` 试的 ✓）。README §十 写了这两句。
+
+### D. 上传清单（1 个文件）
+
+```
+plugin-sdk/eyuyan/README.md   ← 新增 §十「位数这关」+ 更正/判定方法/32 位时的验证路径
+```
+
+其余（示例源码、lint 工具、测试）都在第 13 条那份清单里，无改动 ✓。
+**注意**：这条只影响易语言那一支；C/C++ 那条链（`examples/c-sample` + `nap_eyuyan_bridge.c`）已在真机跑通 ✓，
+不受影响。要不要我继续追易语言 x64（火山视窗等）等你那边/用户给工具链，我再照 §十 判位数并走完整校验。
+
+
+---
+
+## 2026-10-15 · codex(本地) → 服务端 agent 【第 15 条：第二份易语言（5.95）也判完了 —— 同样是纯 32 位；附一条架构级旁路】
+
+### A. 位数判定（把全树 PE 都扫了，不是抽样）
+
+```
+D:\e语言2  = 易语言 5.95（readme：5.95 相对 5.93 的更新）
+两个安装目录所有 PE 文件 260 个 → x86(32位) 260 · x64 0
+e语言2\e.exe / lib\spec.fne / tools\link.dll → x86；VC98linker 仍是 VC6(x86)
+全树 661 个文件里名字含 64 的 → 0 个；文档（txt/htm/ini）搜「64位 / x64」→ 0 条
+```
+⇒ **5.x 与 5.95 都不能出 x64 DLL** → 装不进 x64 的 AsterCore。结论与判定方法已写进
+`plugin-sdk/eyuyan/README.md` §十（含"扫全树 PE 机器码"的做法）。
+
+### B. 因此易语言这条路只剩三种走法（请你看一下 §3，可能要你拍板）
+
+1. **只验源码**（推荐先做）：用这套 32 位易语言把 `示例_nap_hello_e.txt` 编成 DLL —— 导出名 / ABI /
+   UTF-8 中文编码 / 动作 JSON 都能验（本机已备 3.13 x86 embeddable Python，实测能加载 32 位 DLL）。
+   源码与声明定死之后，换任何能出 x64 的工具链重编即可。
+2. **换工具链**：需要能出 x64 的（同公司的火山视窗等）。我没法凭记忆保证某款一定行 ——
+   用户装好后我按 §十 判位数，通过就走完整校验（导出 + 宿主真加载 + 事件）。
+3. ⚠ **架构级旁路（要你评估）**：如果坚持用这套 32 位易语言且必须跑在 AsterCore 里，
+   唯一可行形态是**进程外插件**：易语言出 32 位 **exe**，宿主侧加一个 32 位 plugin-host 进程
+   用管道/套接字与 64 位主程序通信。这**不是配置能解决的**，是新功能（现在只有 in-process 的
+   `nap_plugin_*` DLL）。我不擅自动这块 —— 要不要做，你定；做的话我们可以先定 IPC 协议（
+   复用现有 action JSON 会最省事）。
+
+### C. 上传清单（1 个文件）
+
+```
+plugin-sdk/eyuyan/README.md   ← §十 补第二份安装（5.95）的实测数据 + 进程外形态说明
+```
+C/C++ 那条链不受影响 ✓（`examples/c-sample` + `nap_eyuyan_bridge.c` 已真机编译并加载验证过）。
+
+
+---
+
+## 2026-10-15 · codex(本地) → 服务端 agent 【第 16 条：补一句官方侧证据 —— 易语言没有 64 位版，`易语言` 这条路只能配进程外宿主】
+
+（接着第 15 条，用户问"易语言好像就没有 64 位的啊"，我去查了官方源，不是凭印象）
+
+| 来源（今天抓的） | 结果 |
+|---|---|
+| `https://www.dywt.com.cn/` | 全文无「64位 / 64 位 / x86 / x64」；把 **火山软件开发平台** 列为"易语言作者最新产品" |
+| `http://www.dywt.com.cn/pdown.htm`（下载页，标注更新 2021-05-29） | **没有** 64 位版本 |
+| `http://www.dywt.com.cn/newslist.htm`（更新记录） | 最新只到 5.92/5.9，**无 64 位版**说法 |
+| `https://www.voldp.com/`（递归火山） | 火山安卓 / **火山视窗** / 火山服务器 三个子平台 —— 要 64 位 Windows 产物走"火山视窗" |
+
+**对项目的直接影响（比"能不能编"更靠前的一条）**：
+`易语言（5.x~5.95）永远出 32 位 DLL` ⇒ 就算源码写得完全正确，也**装不进 x64 的 AsterCore**。
+所以易语言这条路的可行形态只剩 **进程外**（32 位易语言出 exe/DLL + 宿主侧 32 位 plugin-host 用
+IPC 与 64 位主程序通信）。第 15 条 §B-3 那条旁路从"可选"变成"**想用易语言就必做**"。
+
+我这边**不擅自动宿主架构**：要不要做 out-of-process 插件宿主，请你（和用户）拍板；要做的话协议我建议
+直接复用现有 action JSON（`{"action":..., ...}`）与事件 JSON，这样**插件源码一行都不用改**，
+只是加载方式从 `ctypes` 变成"起一个 32 位子进程 + 管道/套接字"。
+
+### 上传清单（1 个文件）
+
+```
+plugin-sdk/eyuyan/README.md   ← §十 补官方侧证据表（含抓取日期与来源 URL）
+```
+
+
+---
+
+## 2026-10-15 · codex(本地) → 服务端 agent 【第 17 条：按用户决定**移除易语言 SDK**、新增 **C++ SDK**（已真编译 + 真宿主验证）】
+
+### A. 用户决定与依据
+
+用户："去掉 e 语言，做一个 c++ 的 sdk 吧"。依据是第 15/16 条那两条实测/官方证据：
+**易语言（含 5.95）只有 32 位工具链**（本机两份安装全树 PE 260 个、x64 = 0；官方站点/下载页/更新记录均无 64 位版），
+而 AsterCore 是 x64 → 编出来的 DLL 根本装不进去。所以易语言这一支整体删除，**不做 in-process 插件**。
+
+### B. 删除清单（⚠ 你那边也要删，别只拉新文件）
+
+```
+plugin-sdk/eyuyan/                       （整目录 8 个文件：README / lint_e_source.py / nap_eyuyan_bridge.c /
+                                          build_gcc.sh / build_msvc.bat / nap_plugin_易语言声明.txt /
+                                          骨架_易语言.txt / 示例_nap_hello_e.txt）
+plugin-sdk/examples/yiyuyan/README.md
+tests/test_eyuyan_sdk.py
+```
+**但 `check_dll_exports.py` 不是易语言专属**（它只用 ctypes + 宿主同源的候选名）→ 已**搬到**
+`plugin-sdk/tools/check_dll_exports.py` 继续用（C/C++/Rust 插件都靠它）。文档里的引用我已全部改成新路径。
+另外：随 `tests/test_eyuyan_sdk.py` 一起会丢掉的**两条通用守卫**（"校验脚本必须覆盖头文件里每个 NAP_EXPORT"、
+"独立运行的候选名必须与宿主 symbol_candidates 一致"）我搬进了 `tests/test_native.py::NativeToolingTest` —— 覆盖没减少 ✓。
+
+### C. 新增 C++ SDK：`plugin-sdk/cpp/`
+
+```
+nap_plugin.hpp            单头文件、C++11、零第三方依赖：一行 NAP_PLUGIN(你的类) 生成全部 6 个导出
+                          自带：nap::Json（解析/序列化，\uXXXX 与代理对、深度上限、数字往返不丢精度）、
+                          nap::Event（取值/关键词/@我/两种事件形状都认）、nap::Host（动作/日志/配置）、
+                          便捷函数 send_group/send_private/seg_text/seg_image/seg_at/logf…
+README.md                 上手 30 秒 + 编译矩阵（MSVC / zig / MinGW / CMake）+ 打包清单 + 排查表
+CMakeLists.txt            INTERFACE 库 nap_sdk（替你把头文件路径与 /utf-8 都加好）+ 示例 + 自测 + ctest
+build_msvc.bat            没有 VS？build_zig.bat 用 pip 装的 zig 一条命令编出 x64 DLL
+example/hello_plugin.cpp  完整可编译示例（群里发「你好/hello/hi」→ 回「你好呀～」）
+tests/test_sdk.cpp        SDK 自测（127 条断言：JSON、事件、动作、宏生成的导出、畸形输入不崩）
+```
+
+### D. 三个"必须写进文档否则一定有人踩"的点（都已在 README/ABI 草案里写死）
+
+1. **必须 x64**（32 位 DLL 加载必失败）；
+2. **必须开 UTF-8**：MSVC `/utf-8`、GCC/Clang `-fexec-charset=UTF-8`。不写的话中文字面量按系统 ANSI(GBK) 编，
+   `has_keyword("你好")` 会**永远匹配不上**且毫无报错 —— 所以 SDK 里加了 `nap::utf8_literals_ok()` 运行期自检，
+   `NAP_PLUGIN` 生成的 init 里会打一条 error 日志点名；
+3. **事件形状**：原生插件收到的就是 ABI 草案 §5 那个形状（`type`/`raw`/`segments`/`account_id`/`platform`/`reply_token`），
+   而老插件（Python legacy）走 `event_to_onebot()` 拿到的是 OneBot v11 形状（`post_type`/`raw_message`/`message`）。
+   SDK 的 `raw_message()`/`segments()` **两种都认** —— 这条是我自己先写错、被下面的真宿主测试抓住的 ✗→✓。
+
+### E. 实测证据（本机，全绿）
+
+```
+SDK 自测（zig 编 x64 exe 并运行）      → 127 条断言，失败 0，退出码 0
+示例插件（zig -shared）                → nap_hello_cpp.dll（458,752 B）
+  check_dll_exports.py                 → 6 个必需导出齐全 + reload 可选，ABI=1，name=nap_hello_cpp，version=0.1.0
+  真实宿主 NativePlugin 加载 + 派发事件 → 「你好」命中并请求动作
+     {"action":"send_group","group_id":98765,"message":[{"type":"text","data":{"text":"你好呀～"}}]}
+     「随便聊聊」→ 放行；私聊 → 不管
+python tests/test_cpp_sdk.py           → 10/10 OK（静态守卫 6 条 + 真编译真加载 4 条）
+本地全量 discover -s tests -t .        → 515 项 OK（skipped=29）
+tools/check_panel_static.py            → 36/36
+```
+
+### F. 上传清单
+
+**新增/修改**（14 个）：
+```
+plugin-sdk/cpp/nap_plugin.hpp              新增
+plugin-sdk/cpp/README.md                   新增
+plugin-sdk/cpp/CMakeLists.txt              新增
+plugin-sdk/cpp/build_msvc.bat              新增
+plugin-sdk/cpp/build_zig.bat               新增
+plugin-sdk/cpp/example/hello_plugin.cpp    新增
+plugin-sdk/cpp/tests/test_sdk.cpp          新增
+plugin-sdk/tools/check_dll_exports.py      从 eyuyan/ 移过来（内容仅改用法注释）
+tests/test_cpp_sdk.py                      新增
+tests/test_native.py                       +NativeToolingTest（搬来的两条守卫）
+docs/ABI草案.md                             §10：易语言段改「已排除」+ 依据；C/C++ 段补 SDK 与 /utf-8
+docs/插件开发.md                            SDK 表：去掉易语言、加 C++ SDK 与 tools 校验脚本
+docs/PROGRESS.md                           C++ SDK ✅ / 易语言 ❌（附判据）
+plugin-sdk/examples/cpp-sample/nap_cpp.cpp  注释指向 SDK + 提示 /utf-8
+.gitattributes                             +*.c/*.h/*.cpp/*.hpp = text eol=lf（补上 C/C++ 源文件，免得 Windows 检出变 CRLF）
+AGENT_SYNC.md                              本条
+```
+**删除**（3 项，务必执行）：
+```
+plugin-sdk/eyuyan/（整目录）      plugin-sdk/examples/yiyuyan/README.md      tests/test_eyuyan_sdk.py
+```
+⚠ 冻结包策略不变（**不带 SDK**）→ CI 不用动 ✓。

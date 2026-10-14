@@ -1,6 +1,11 @@
-// 栖星 AsterCore · C++ 原生插件示例（复用 nap_plugin.h）
+// 栖星 AsterCore · C++ 原生插件示例 —— **裸 ABI 版**（只用 nap_plugin.h，不引 SDK）
+//
+// 想看"省事写法"（一行 NAP_PLUGIN(类) 生成导出、自带 JSON/事件/动作封装）：
+//   plugin-sdk/cpp/           ← C++ SDK（单头文件，零依赖，C++11）
+//   plugin-sdk/cpp/example/hello_plugin.cpp
+//
 // 构建：g++ -shared -fPIC -O2 -I../.. nap_cpp.cpp -o libnap_cpp.so
-//       （Windows: cl /LD /I../.. nap_cpp.cpp 或 g++ -shared）
+//       （Windows: cl /LD /utf-8 /I../.. nap_cpp.cpp  ← /utf-8 不能省，中文字面量要走 UTF-8）
 // 行为：消息含"点歌"时回一条（示例占位，真实点歌可接 HTTP API）。
 
 #include <cstdio>
