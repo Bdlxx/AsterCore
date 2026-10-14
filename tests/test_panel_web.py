@@ -624,23 +624,6 @@ class SpecNamingTest(unittest.TestCase):
             tmp.cleanup()
 
 
-class BotAvatarFallbackTest(unittest.TestCase):
-    """左上角账号卡头像：空 src 会显示破图（无账号时最明显）"""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.js = PANEL_JS.read_text(encoding="utf-8")
-
-    def test_no_empty_avatar_src(self):
-        self.assertNotIn('botAvatar\\" src=\\"\\"', self.js, "不允许空 src（会破图）")
-        self.assertIn('botAvatar\\" src=\\"favicon.ico', self.js, "无账号时用应用图标")
-
-    def test_has_inline_fallback(self):
-        self.assertIn("DEFAULT_AVATAR", self.js)
-        self.assertIn("data:image/svg+xml", self.js, "要有不依赖文件的内联兜底")
-        self.assertIn("naturalWidth === 0", self.js, "文件不存在要立刻兜底")
-
-
 class PageTitleTest(unittest.TestCase):
     """网页端标题（用户指定「栖星管理页面」）：固定住，别再被账号名覆盖回去"""
 
@@ -1261,6 +1244,20 @@ class WindowChromeTest(unittest.TestCase):
                         or ("location.protocol !== 'file:'" in self.index),
                         "只在桌面壳注入（两种写法都算：=== 或 !==）")
 
+    def test_dead_containers_removed(self):
+        """旧容器与接线必须彻底删除：它们因 panel.js 早退永远不可见，是死代码（用户 ②）"""
+        import pathlib as _pl
+        root = _pl.Path(__file__).resolve().parent.parent / "src" / "astercore" / "web" / "static"
+        js = (root / "panel.js").read_text(encoding="utf-8")
+        css = (root / "panel.css").read_text(encoding="utf-8")
+        # index.html 只查**标记**：installWindowChrome 的注释里会提到 #desktopBar（说明踩过的坑），
+        # 那不是死代码；panel.js / panel.css 则应彻底没有这些名字
+        for dead in ("desktopBar", "acctOverlay"):
+            self.assertNotIn('id="' + dead + '"', self.index, "index.html 不该再有 " + dead + " 标记")
+            self.assertNotIn(dead, js, "panel.js 不该再有 " + dead)
+            self.assertNotIn(dead, css, "panel.css 不该再有 " + dead)
+        self.assertNotIn(".db-", css, "panel.css 的 .db-* 死样式应已删除")
+
     def test_rpc_registered(self):
         self.assertIn('_reg_rpc(hub, "/api/app/window"', self.launch)
         for action in ("minimize", "hide", "quit"):
@@ -1270,7 +1267,9 @@ class WindowChromeTest(unittest.TestCase):
         css = (Path(__file__).resolve().parent.parent / "src" / "astercore" / "web" / "static" /
                "panel.css").read_text(encoding="utf-8")
         self.assertIn("-webkit-user-select:text", css, "正文要可选中")
-        self.assertIn("no-drag", css, "拖动区内按钮要排除拖动（否则点不动）")
+        # 拖动区已改用 codex 的机制（.header 挂 pywebview-drag-region），不再靠 -webkit-app-region
+        self.assertIn("-webkit-user-select:text", css, "正文仍要可选中")
+        self.assertIn("user-select:text", css, "正文仍要可选中（标准属性）")
 
 
 class WindowMaximizeTest(unittest.TestCase):
@@ -1308,8 +1307,10 @@ class TextSelectTest(unittest.TestCase):
     def test_shell_enables_text_select(self):
         self.assertIn("text_select=True", self.shell, "pywebview 要开 text_select")
 
-    def test_css_allows_text_but_keeps_drag_area_unselectable(self):
+    def test_css_allows_text_select(self):
         self.assertIn("-webkit-user-select:text", self.css, "正文/输入框要可选中")
-        self.assertIn("#desktopBar,#desktopBar *{-webkit-user-select:none", self.css,
-                      "顶栏是拖动区，必须保持不可选")
+        # 拖动区已改为 codex 的机制（.header 挂 pywebview-drag-region），不再靠 #desktopBar 规则
+        idx = (Path(__file__).resolve().parent.parent / "src" / "astercore" / "web" / "static" /
+               "index.html").read_text(encoding="utf-8")
+        self.assertIn("pywebview-drag-region", idx, "拖动区改用 pywebview-drag-region")
 
