@@ -1,0 +1,32 @@
+# 行尾统一（用户清单 P2.2）
+# 背景：本项目会话中多次出现"CRLF 导致的假改动"与哈希比对误判（Windows 检出 vs Linux 仓库）。
+# 规则：默认交给 git 判断文本；明确的源码/文本文件统一 LF；二进制不转换。
+* text=auto
+
+*.py    text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.spec  text eol=lf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 二进制：不做行尾转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.exe   binary
+*.dll   binary
+*.pyd   binary
+*.so    binary
+*.zip   binary
+*.tgz   binary
+*.7z    binary

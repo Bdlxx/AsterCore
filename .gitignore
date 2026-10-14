@@ -26,3 +26,8 @@ docs/Windows版开发计划书.md
 
 # 构建前临时落地（tools/fetch_ffmpeg.py 下载，不进仓库）
 tools/ffmpeg/
+
+# 构建产物与工作文档备份（用户清单 P2.1/P2.3）
+*.egg-info/
+*.bak
+*.bak-*
