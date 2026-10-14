@@ -20,11 +20,17 @@ DEFAULT_PAGE_PORT = 34567
 
 
 # ---------------------------------------------------------------- 概览
+def _conn_state(acc: dict) -> str:
+    """后端连接文案（概览卡片与 /ui/status 轮询共用，别各写一份）"""
+    if acc.get("connected"):
+        return "已连接"
+    return "未连接" if acc.get("running") else "未启动"
+
+
 def _dashboard(ctx):
     acc = ctx.get('account') or {}
     info = ctx.get('info') or {}
     plugins = ctx.get('plugins') or []
-    running = bool(acc.get('running'))
     aid = esc(acc.get('account_id') or '')
 
     if not aid:
@@ -39,25 +45,18 @@ def _dashboard(ctx):
         + '</div>' for p in plugins) or \
         '<div style="padding:20px;color:var(--text-secondary);text-align:center">账号未运行，或没有插件</div>'
 
+    # 用户要求：账号状态/版本 在顶部栏已经有了，这两张卡去掉，别重复；
+    # 只留"后端连接"（顶栏没有）与"已加载插件"。
     return f"""
-      <div class="stat-grid">
-        <div class="stat-card"><div class="stat-icon blue">🤖</div><div class="stat-info">
-          <div class="label">账号状态</div>
-          <div class="value" id="dashBotVal">{'运行中' if running else '已停止'}</div>
-          <div class="desc" id="dashBotDesc">{esc(acc.get('display_name') or aid)} · {esc(acc.get('backend_name') or '')}</div>
-        </div></div>
+      <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
         <div class="stat-card"><div class="stat-icon green">🔗</div><div class="stat-info">
           <div class="label">后端连接</div>
-          <div class="value">{'已连接' if acc.get('connected') else ('未连接' if running else '未启动')}</div>
-          <div class="desc">{esc(acc.get('backend') or acc.get('backend_name') or '')}</div>
+          <div class="value" id="dashConnVal">{esc(_conn_state(acc))}</div>
+          <div class="desc" id="dashConnDesc">{esc(acc.get('backend') or acc.get('backend_name') or '')}</div>
         </div></div>
         <div class="stat-card"><div class="stat-icon orange">🧩</div><div class="stat-info">
           <div class="label">已加载插件</div><div class="value">{len(plugins)} 个</div>
           <div class="desc">点击下方插件可直接配置</div>
-        </div></div>
-        <div class="stat-card"><div class="stat-icon purple">📦</div><div class="stat-info">
-          <div class="label">版本</div><div class="value">v{esc(info.get('version') or '')}</div>
-          <div class="desc">{'冻结版' if info.get('frozen') else '源码运行'}</div>
         </div></div>
       </div>
       <div class="card"><div class="card-header"><h3>🧩 插件概览</h3>
@@ -78,8 +77,6 @@ def _dashboard(ctx):
             ('数据目录', esc(info.get('data_dir') or '-')),
             ('插件目录', esc(info.get('plugin_dir') or '-')),
         ])}
-        <table class="el-table" style="margin-top:10px"><tr><th width="150">项目</th><th>值</th></tr>
-          <tr><td>连接方式</td><td id="transportMode">-</td></tr></table>
       </div></div>"""
 
 
@@ -363,22 +360,14 @@ def render_page(page, ctx):
 def render_status(ctx):
     """状态区片段（通用形状：{html:{id:内容}, text:{id:文本}}）——与 Linux 端同一套"""
     acc = ctx.get('account') or {}
-    aid = esc(acc.get('account_id') or '')
     running = bool(acc.get('running'))
     connected = bool(acc.get('connected'))
     return {
-        'html': {
-            'botStatusArea': (status_tag(running)
-                              + f'<span style="font-size:13px;font-weight:600">{esc(acc.get("display_name") or aid)}</span>'
-                              + f'<span style="font-size:12px;color:var(--text-secondary)">'
-                              + f'{esc(acc.get("backend") or acc.get("backend_name") or "")}'
-                              + (f' · {esc(acc.get("plugin_count"))} 个插件' if acc.get('plugin_count') is not None else '')
-                              + '</span>'),
-            'dashBotDesc': f'{esc(acc.get("display_name") or aid)} · {esc(acc.get("backend_name") or "")}',
-        },
+        # 只喂**页面上真的存在**的锚点：账号状态/版本卡已按用户要求移除，
+        # 顶栏那份由 headerStatus 轮询负责，这里只管概览的「后端连接」卡。
         'text': {
-            'dashBotVal': '运行中' if running else '已停止',
-            'dashBotDesc': f'{acc.get("display_name") or aid} · {acc.get("backend_name") or ""}',
+            'dashConnVal': _conn_state(acc),
+            'dashConnDesc': acc.get('backend') or acc.get('backend_name') or '',
         },
         'running': running,
         'connected': connected,

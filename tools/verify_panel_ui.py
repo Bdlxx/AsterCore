@@ -157,6 +157,12 @@ def main() -> int:
                                        shell["content"], shell["bar"], shell["toast"], shell["modal"]]), shell)
             check("图标精灵已水合", shell["icons"] >= 8, f'{shell["icons"]} 个')
             check("设计令牌已生效（与 Linux 同源）", bool(shell["tokens"]), shell["tokens"])
+            # 齿轮卡片/账号浮层是向右探出侧栏的：侧栏层级低于底部操作栏就会被它盖住
+            # （用户报过左下角卡片里"引导"那一条被操作栏吃掉）
+            zs = page.evaluate("""() => ({
+                sidebar: +getComputedStyle(document.querySelector('.sidebar')).zIndex,
+                bar: +getComputedStyle(document.getElementById('actionBar')).zIndex})""")
+            check("侧栏层级高于底部操作栏", zs["sidebar"] > zs["bar"], zs)
             # 顶栏状态胶囊：账号在跑就必须显示"运行中"。读错信封层时会恒为
             # "已停止/连接失败"，而页面本身不报错 —— 属于静默失效，必须显式断言。
             check("顶栏状态胶囊反映真实运行状态",
@@ -175,7 +181,7 @@ def main() -> int:
             check("左下角齿轮卡片 = 更新 / 设置 / 引导",
                   page.eval_on_selector_all("#appMenu .app-menu-item", "els=>els.map(e=>e.textContent.trim())")
                   == ["更新", "设置", "引导"])
-            pages = {"dashboard": ["#dashBotVal", ".stat-card"], "accounts": ["#ac_id", ".stat-card"],
+            pages = {"dashboard": ["#dashConnVal", ".stat-card"], "accounts": ["#ac_id", ".stat-card"],
                      "config": ["#configForm", "#tab-json"], "logs": ["#logViewer", "#logLinesSel"],
                      "settings": ["#au_mode", "#sp_port"],
                      "napcat": ["#ncStatus", "[data-act='gd-install']"],

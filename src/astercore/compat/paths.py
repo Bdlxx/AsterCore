@@ -8,10 +8,11 @@
 # 设计原则：**不改插件**（Linux/Windows 双端用同一份插件代码），只在兼容层出口
 # 做一次映射，且默认"不改行为"：
 #   · Linux + Docker：保持容器路径原样（线上现状，插件硬编码的就是对的）
-#   · Windows 原生 NapCat：默认映射 /app/cache/images → %USERPROFILE%\napcat\cache\images
-# 需要时可在账号 config.json 里显式指定：
+#   · Windows 原生 NapCat：映射 /app/cache/images → <组件目录>/napcat/cache/images
+#     （NapCat 本体所在的工作目录，见 default_cache_host 与 components.napcat_work_dir）
+# 需要时可在账号 config.json 里显式指定（优先级高于默认值）：
 #   NAPCAT_CACHE_PREFIX : 插件发出的前缀（默认 /app/cache/images）
-#   NAPCAT_CACHE_HOST   : 本机真实目录（Windows 默认 %USERPROFILE%\napcat\cache\images）
+#   NAPCAT_CACHE_HOST   : 本机真实目录（默认见 default_cache_host）
 
 from __future__ import annotations
 
@@ -61,6 +62,7 @@ def default_cache_host(base_dir=None) -> Path:
     except Exception:                       # noqa: BLE001 兼容层不能被路径问题拖死
         pass
     return Path.home() / "napcat" / "cache" / "images"
+
 
 def _cfg(rt, key: str, default=None):
     try:

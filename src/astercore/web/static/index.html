@@ -4,7 +4,7 @@
   <link rel="icon" type="image/x-icon" href="favicon.ico">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>栖星 AsterCore</title>
+<title>栖星管理页面</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><path fill=%22%231E40AF%22 d=%22M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.3 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z%22/></svg>">
 <!-- 两端共用的面板样式与外壳（与 Linux 版同一份字节，见 mybot2/tests/test_dual_end_assets.py） -->
 <link rel="stylesheet" href="panel.css">
@@ -351,6 +351,49 @@ async function resumeJobWatch() {
   } catch (e) { /* 拿不到就当没有任务 */ }
 }
 
+/* ---------------- 无边框窗口的自绘窗口按钮（桌面模式顶部三按钮） ----------------
+   为什么注入进共用顶栏，而不是用本文件末尾那段 #desktopBar：
+   ① 那段标记在 panel.js **之后**解析，panel.js 里的接线 `getElementById` 拿到 null
+      就 return 了 → 顶栏恒 display:none，三按钮与拖动区跟着一起失效（v0.6.0 起如此）；
+   ② 就算让它显示，也会和共用顶栏重复（昵称/状态/退出两边都有）。
+   所以窗口三按钮直接并进共用顶栏右侧，且**只在桌面壳里注入**：浏览器/端口模式是
+   http，本来就没有窗口可控制（/api/app/window 只注册在进程内 RPC）。 */
+function installWindowChrome() {
+  if (location.protocol !== 'file:') return;              /* 浏览器/端口模式：不注入 */
+  const right = document.querySelector('.header-right');
+  if (!right || document.getElementById('winCtl')) return;
+  if (!document.getElementById('winCtlStyle')) {
+    const st = document.createElement('style');
+    st.id = 'winCtlStyle';
+    st.textContent = [
+      /* 整条顶栏当标题栏。pywebview 认 .pywebview-drag-region（拖动由它的 JS 实现）；
+         WebView2 不认 -webkit-app-region，但留着不冲突、也不影响浏览器端。 */
+      '.header,.header-breadcrumb{-webkit-app-region:drag}',
+      '.header button,.header a{-webkit-app-region:no-drag}',
+      '.win-ctl{display:flex;align-items:center;gap:2px;margin-left:2px;padding-left:8px;',
+      '  border-left:1px solid var(--border-color)}',
+      '.win-ctl button{width:32px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;',
+      '  color:var(--text-regular);font-family:inherit;font-size:13px;line-height:1;cursor:pointer}',
+      '.win-ctl button:hover{background:var(--bg-hover);color:var(--text-primary)}',
+      '.win-ctl button.danger:hover{background:#c0392b;color:#fff}',
+    ].join('\n');
+    document.head.appendChild(st);
+  }
+  [document.querySelector('.header'), document.querySelector('.header-breadcrumb')]
+    .forEach(function (el) { if (el) el.classList.add('pywebview-drag-region'); });
+  const box = document.createElement('span');
+  box.id = 'winCtl';
+  box.className = 'win-ctl';
+  box.innerHTML =
+    '<button type="button" id="winMin" data-act="win-min" title="最小化窗口"'
+    + ' aria-label="最小化窗口">&#8211;</button>'
+    + '<button type="button" id="winHide" data-act="win-hide"'
+    + ' title="关闭窗口（保留托盘，随时点托盘图标再打开）" aria-label="关闭窗口保留托盘">&#9723;</button>'
+    + '<button type="button" id="winQuit" class="danger" data-act="win-quit" title="退出程序"'
+    + ' aria-label="退出程序">&#10005;</button>';
+  right.appendChild(box);
+}
+
 /* 账号弹窗两步走（用户要求：先选连接方式，再填对应信息）。
    acctShowMode 由选卡 / 编辑账号调用；acctReset 回到"选方式"那一步。 */
 function acctShowMode(mode) {
@@ -555,6 +598,7 @@ PANEL.hooks = {
       await Transport.detect();
       Transport.installFetchShim();
     } catch (e) { /* 兜底走 HTTP */ }
+    installWindowChrome();          /* 桌面壳：顶栏右上角补上窗口三按钮 */
     /* 鉴权闸门：需要登录就先登录，否则面板接口全是 401 */
     const a = await j('/api/auth/status');
     const st = (a && a.data) || {};
@@ -593,7 +637,6 @@ PANEL.hooks = {
     const a = ACCTS.find(function (x) { return x.account_id === AID; }) || {};
     PANEL.$('botName').textContent = a.display_name || AID || '栖星 AsterCore';
     PANEL.$('botSub').textContent = AID ? ('ID ' + AID + ' · ' + (a.backend_name || '')) : '还没有账号';
-    document.title = (a.display_name || 'AsterCore') + ' - 管理面板';
     await loadPlugins();
     resumeJobWatch();          /* 刷新过页面时，接着显示正在跑的安装进度 */
   },
