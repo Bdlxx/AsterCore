@@ -45,6 +45,9 @@ jobs:
 
       - name: Run tests
         # -t . 保证以仓库根为顶层（否则 tests 目录会被当成顶层、导入不到 astercore）
+        env:
+          # CI 装的是 [web,desktop,parser] → 解析依赖必须齐全，强制校验
+          ASTERCORE_TEST_PARSER_DEPS: "1"
         run: python -m unittest discover -s tests -t .
 
       - name: Fetch ffmpeg (Windows)

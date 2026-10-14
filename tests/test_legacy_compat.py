@@ -155,7 +155,15 @@ class LegacyCompatTest(unittest.TestCase):
         types = [s["type"] for s in msg]
         self.assertIn("image", types, f"CQ 图片应被解析成消息段: {msg}")
         img = next(s for s in msg if s["type"] == "image")
-        self.assertEqual(img["data"]["file"], "/app/cache/images/a.png")
+        # 平台无关的断言（第一版我用了 self.rt，但本类没有该夹具 → AttributeError ✗）：
+        #   Linux/Docker：无映射 → 容器路径原样
+        #   Windows：默认映射到本机缓存目录 → 绝对路径、且不残留 /app/cache/images/ 前缀
+        got = img["data"]["file"].replace("\\", "/")
+        self.assertTrue(got.endswith("a.png"), f"图片段应指向同一张图: {got}")
+        if got.startswith("/app/"):
+            self.assertEqual(got, "/app/cache/images/a.png")
+        else:
+            self.assertTrue(Path(got).is_absolute(), f"映射后应是本机绝对路径: {got}")
 
     def test_forward_message_uses_forward_action(self):
         _, calls = asyncio.run(self._run("转发"))
@@ -288,6 +296,8 @@ class LegacyPathMapTest(unittest.TestCase):
         (self.instance / "config.json").write_text(
             json.dumps(extra, ensure_ascii=False), encoding="utf-8")
 
+    @unittest.skipIf(os.name == "nt",
+                     "Windows 默认要映射到本机缓存目录，本用例只描述 Linux/Docker 的默认行为")
     def test_identity_by_default_on_linux(self):
         """Linux/Docker 下容器路径本来就是对的 → 默认不映射（保持线上行为）"""
         from astercore.compat import paths as cpaths
