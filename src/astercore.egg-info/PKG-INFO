@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: astercore
+Version: 0.1.0
+Summary: 栖星 AsterCore — QQ 机器人多后端框架（Windows 桌面版内核）
+Requires-Python: >=3.10
+Requires-Dist: websocket-client>=1.6
+Requires-Dist: requests>=2.28
+Provides-Extra: web
+Requires-Dist: flask>=2.2; extra == "web"
