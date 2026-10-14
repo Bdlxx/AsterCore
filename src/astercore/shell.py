@@ -149,6 +149,9 @@ class ShellApp:
                     width=self.width, height=self.height, min_size=(900, 600),
                     confirm_close=False,     # 自己拦截关闭（手册 §1.1）
                     frameless=True,          # 无边框：标题栏由面板自绘三按钮
+                    text_select=True,        # 允许选中文字（token/路径要能复制；
+                                             # 拖动区在 CSS 里单独 user-select:none）
+
                                              # （左=最小化 / 中=收起托盘 / 右=退出程序）
                 )
                 try:

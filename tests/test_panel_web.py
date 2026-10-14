@@ -1296,3 +1296,20 @@ class WindowMaximizeTest(unittest.TestCase):
         self.assertIn("def toggle_maximize", self.shell)
         self.assertIn('action == "maximize"', self.launch)
 
+
+class TextSelectTest(unittest.TestCase):
+    """面板文字可选中（token/路径要能复制），但顶栏拖动区必须保持不可选"""
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.shell = (root / "src" / "astercore" / "shell.py").read_text(encoding="utf-8")
+        self.css = (root / "src" / "astercore" / "web" / "static" / "panel.css").read_text(encoding="utf-8")
+
+    def test_shell_enables_text_select(self):
+        self.assertIn("text_select=True", self.shell, "pywebview 要开 text_select")
+
+    def test_css_allows_text_but_keeps_drag_area_unselectable(self):
+        self.assertIn("-webkit-user-select:text", self.css, "正文/输入框要可选中")
+        self.assertIn("#desktopBar,#desktopBar *{-webkit-user-select:none", self.css,
+                      "顶栏是拖动区，必须保持不可选")
+
