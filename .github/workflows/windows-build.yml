@@ -73,19 +73,22 @@ jobs:
           python -m PyInstaller pack/astercore.spec --noconfirm --clean
 
       - name: Add docs to package
-        # ⚠ 必须**按 git 跟踪清单**复制：v0.6.26 的包里混进了
-        # `docs/Windows版开发计划书.md.bak-20261014-0038`（当时它还被 git 跟踪，
-        # tag 打在"取消跟踪"之前就出了包）。从此按清单复制，未跟踪文件永远进不了包。
+        # 使用说明与 README 放在 exe 同级，用户解压即可看到
+        # docs 必须**按 git 跟踪清单**复制：v0.6.26 包里混进了
+        # docs/Windows版开发计划书.md.bak-20261014-0038（当时它还被跟踪，tag 打在取消跟踪之前）
         run: |
-          $dst = "dist\astercore\docs"
+          Copy-Item "pack/使用说明.txt" "dist/astercore/使用说明.txt" -Force
+          $dst = "dist/astercore/docs"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           $files = git ls-files docs
           if (-not $files) { throw "git ls-files docs 返回空 —— 打包前请确认 docs 已提交" }
           foreach ($f in $files) { Copy-Item $f -Destination $dst -Force }
           Write-Host "已复制 $($files.Count) 个文档（按 git 跟踪清单）"
-          if (Test-Path "docs\常见问题FAQ.md") {
-            Copy-Item "docs\常见问题FAQ.md" "dist\astercore\常见问题FAQ.md" -Force
-          }
+          if (Test-Path "docs/常见问题FAQ.md") { Copy-Item "docs/常见问题FAQ.md" "dist/astercore/常见问题FAQ.md" -Force }
+          if (Test-Path "README.md") { Copy-Item "README.md" "dist/astercore/README.md" -Force }
+          # .NET Framework 运行时配置必须与 exe 同级（PyInstaller 的 datas 只会进 _internal，
+          # 而 .NET 只认 exe 旁边的同名 .config）
+          if (Test-Path "pack/astercore.exe.config") { Copy-Item "pack/astercore.exe.config" "dist/astercore/astercore.exe.config" -Force }
 
       - name: Package zip
         shell: pwsh
