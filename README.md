@@ -5,7 +5,7 @@
 栖星（AsterCore）是一个面向普通用户的 QQ 机器人框架：**多账号、多后端（NapCat / 内置协议可选）、
 插件化（.py/.pyd/.dll 三态）、带 Web 管理面板、桌面内嵌窗口与自动更新**。
 
-- 中文「栖星」· 英文 AsterCore（Aster=紫菀/小行星，Core=内核；与 bot 家族「依星/羽笙」星月意象一致）
+- 中文「栖星」· 英文 AsterCore（Aster=紫菀/小行星，Core=内核）
 - 完整规划：《Windows版开发计划书》（本地 docs，不进远端）· 进度：[docs/PROGRESS.md](docs/PROGRESS.md)
 - 两端（Windows 桌面版 ↔ Linux 机器人）**共用同一套面板资产**，改动必须同步并跑 `test_dual_end_assets`
 
