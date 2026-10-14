@@ -479,3 +479,51 @@ class NapcatCacheHostTest(unittest.TestCase):
         self.assertEqual(got, Path.home() / "napcat" / "cache" / "images",
                          "没装组件时回落到老路径（Linux 端行为不变）")
 
+
+class CacheMigrationTest(unittest.TestCase):
+    """老图片缓存目录一次性迁移（保守：新目录有内容就不动，只搬一次）"""
+
+    def setUp(self):
+        from astercore.compat import paths as P
+        self.P = P
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.old = self.base / "oldcache" / "images"
+        self.old.mkdir(parents=True)
+        (self.old / "a.png").write_bytes(b"img-a")
+        (self.old / "b.png").write_bytes(b"img-b")
+        # 让 default_cache_host 指向本测试的新目录：env 最高优先
+        self._env = os.environ.get("ASTERCORE_NAPCAT_CACHE")
+        self.new = self.base / "newcache"
+        os.environ["ASTERCORE_NAPCAT_CACHE"] = str(self.new)
+
+    def tearDown(self):
+        if self._env is None:
+            os.environ.pop("ASTERCORE_NAPCAT_CACHE", None)
+        else:
+            os.environ["ASTERCORE_NAPCAT_CACHE"] = self._env
+        self.tmp.cleanup()
+
+    def test_moves_and_marks_once(self):
+        r1 = self.P.migrate_legacy_cache(self.base, old_dir=self.old)
+        self.assertEqual(r1["migrated"], 2, r1)
+        self.assertTrue((self.new / "a.png").is_file())
+        self.assertTrue((self.new / "b.png").is_file())
+        self.assertTrue((self.new.parent / ".cache-migrated").is_file(), "要写一次性标记")
+        (self.old / "c.png").write_bytes(b"img-c")          # 迁移后再来的文件
+        r2 = self.P.migrate_legacy_cache(self.base, old_dir=self.old)
+        self.assertEqual(r2["migrated"], 0, "有标记后不再搬")
+
+    def test_does_not_overwrite_existing_new_dir(self):
+        self.new.mkdir(parents=True)
+        (self.new / "keep.png").write_bytes(b"keep")
+        r = self.P.migrate_legacy_cache(self.base, old_dir=self.old)
+        self.assertEqual(r["migrated"], 0)
+        self.assertIn("不覆盖", r["reason"])
+        self.assertTrue((self.new / "keep.png").read_bytes() == b"keep")
+
+    def test_noop_when_old_missing(self):
+        r = self.P.migrate_legacy_cache(self.base, old_dir=self.base / "nothere")
+        self.assertEqual(r["migrated"], 0)
+        self.assertIn("不存在", r["reason"])
+

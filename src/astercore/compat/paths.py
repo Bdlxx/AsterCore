@@ -64,6 +64,49 @@ def default_cache_host(base_dir=None) -> Path:
     return Path.home() / "napcat" / "cache" / "images"
 
 
+def migrate_legacy_cache(base_dir=None, old_dir=None) -> dict:
+    """把老的 `~/napcat/cache/images` **一次性**搬到 NapCat 真实缓存目录。
+
+    为什么需要：缓存目录默认值改动后，老机器上历史图片还在旧位置，
+    而插件引用的 `/app/cache/images/...` 会映射到新位置 → 旧图"找不到"。
+    规则（保守，绝不动用户数据）：
+      · 老目录不存在 或 新目录已有内容 → **什么都不做**
+      · 已经迁移过（存在标记 `<新目录>/../.cache-migrated`）→ 不做
+      · 否则逐文件搬（同名已存在则跳过），搬完写标记，**只搬一次**
+    返回 {"migrated": n, "reason": "..."}，调用方只记录日志即可。
+    """
+    import shutil
+    new = Path(default_cache_host(base_dir))
+    old = Path(old_dir) if old_dir is not None else (Path.home() / "napcat" / "cache" / "images")
+    marker = new.parent / ".cache-migrated"
+    if old == new:
+        return {"migrated": 0, "reason": "新旧目录相同，无需迁移"}
+    if marker.exists():
+        return {"migrated": 0, "reason": "已迁移过（有标记）"}
+    if not old.is_dir():
+        return {"migrated": 0, "reason": "老目录不存在"}
+    try:
+        if new.is_dir() and any(new.iterdir()):
+            return {"migrated": 0, "reason": "新目录已有内容，不覆盖"}
+        new.mkdir(parents=True, exist_ok=True)
+        moved = 0
+        for f in sorted(old.iterdir()):
+            if not f.is_file():
+                continue
+            target = new / f.name
+            if target.exists():
+                continue
+            try:
+                shutil.move(str(f), str(target))
+            except OSError:                     # 跨盘/占用 → 退回复制
+                shutil.copy2(f, target)
+            moved += 1
+        marker.write_text("v1", encoding="utf-8")
+        return {"migrated": moved, "old": str(old), "new": str(new)}
+    except Exception as e:                      # noqa: BLE001 迁移失败不能影响启动
+        return {"migrated": 0, "reason": f"迁移出错：{type(e).__name__}: {e}"}
+
+
 def _cfg(rt, key: str, default=None):
     try:
         from astercore.compat.utils_pkg import _config_dict

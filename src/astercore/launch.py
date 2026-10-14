@@ -191,6 +191,13 @@ async def amain(args: argparse.Namespace) -> int:
         from astercore.paths import app_base_dir as _abd
         if _upd.try_rollback(_abd()):
             print("[launch] 上次更新未能正常启动，已自动回滚到旧版本")
+        try:                                    # 老的图片缓存目录一次性迁移
+            from astercore.compat.paths import migrate_legacy_cache
+            _mig = migrate_legacy_cache(_abd())
+            if _mig.get("migrated"):
+                print(f"[launch] 已迁移 {_mig['migrated']} 个历史图片到 NapCat 缓存目录")
+        except Exception:                       # noqa: BLE001
+            log.debug("缓存目录迁移检查失败", exc_info=True)
     except Exception:                       # noqa: BLE001 更新器不能拖垮启动
         log.exception("更新回滚检查失败")
 
