@@ -153,6 +153,31 @@ def event_text(event: dict) -> str:
 # --------------------------------------------------------------------------- #
 # 分群开关（名字自动取 __plugin_name_en__）
 # --------------------------------------------------------------------------- #
+def _rules_of(mod: Any) -> list:
+    """该模块注册过的规则（用于判断"这是不是插件"）"""
+    if mod is None:
+        return []
+    name = mod.get("__name__") if isinstance(mod, dict) else getattr(mod, "__name__", "")
+    return list(_RULES.get(str(name or ""), []))
+
+
+def _plugin_module_for_check(scope: Any = None):
+    """check() 的模块解析：显式 scope > 注册过规则的模块（最近优先）> 像插件的调用者帧"""
+    if scope is not None:
+        return _mod_of(scope)
+    for name in reversed([n for n, r in _RULES.items() if r]):
+        m = sys.modules.get(name)
+        if m is not None:
+            return m
+    caller = _caller_globals()
+    if caller:
+        m = sys.modules.get(str(caller.get("__name__") or ""))
+        if m is not None and (getattr(m, "handle", None) is not None
+                              or getattr(m, "__plugin_name_en__", None)):
+            return m
+    return None
+
+
 def _caller_globals():
     """向上找到第一个不是本 SDK 的调用帧（插件调 sdk.* 时，那就是插件模块）"""
     try:
@@ -638,13 +663,27 @@ def set_meta(scope: Any = None, *, name_cn: str = "", name_en: str = "", version
 
 
 def check(scope: Any = None) -> list[str]:
-    """可移植性/契约检查（空列表 = 通过）。离线可跑，建议写进插件自测。"""
-    mod = scope if isinstance(scope, dict) else _mod_of(scope)
-    problems: list[str] = []
+    """可移植性/契约检查（空列表 = 通过）。离线可跑，建议写进插件自测。
+
+    ⚠ scope 尽量显式传 globals()。**无参时会按"通过本 SDK 注册过规则的模块"猜**；
+    猜不到就报一条"拿不到插件模块"，而不是误报"缺 handle / 缺 dunder" ——
+    从别的工具里裸调 check() 时，调用者帧往往根本不是插件。
+    """
+    mod = _plugin_module_for_check(scope)
     if mod is None:
-        return ["拿不到模块对象 —— 用 sdk.check(globals()) 调用"]
+        return ["拿不到插件模块 —— 请用 sdk.check(globals())（或把模块对象传进来）"]
+    has_handle = (mod.get("handle") if isinstance(mod, dict) else getattr(mod, "handle", None)) is not None
+    has_dunder = bool(mod.get("__plugin_name_en__") if isinstance(mod, dict)
+                      else getattr(mod, "__plugin_name_en__", None))
+    rules = _rules_of(mod)
+    problems: list[str] = []
     src = ""
     path = mod.get("__file__") if isinstance(mod, dict) else getattr(mod, "__file__", None)
+    try:                                      # 不扫 SDK 自己那份源码（否则它自己的字面量会被当成违规）
+        if path and Path(path).resolve() == Path(__file__).resolve():
+            path = None
+    except Exception:                         # noqa: BLE001
+        pass
     if path and Path(path).is_file():
         try:
             src = Path(path).read_text(encoding="utf-8")
@@ -658,7 +697,13 @@ def check(scope: Any = None) -> list[str]:
         problems.append("用了 self.ctx.* 发消息 —— Linux 版没有 ctx，请改用 utils.api.send_message")
     if "data" in src and re.search(r"[\"']data[\"']\s*[,)]|\"data/", src):
         problems.append("硬编码了 data/ 路径 —— 两端数据目录不同，请用 sdk.config_path()/sdk.cfg()")
-    if (mod.get("handle") if isinstance(mod, dict) else getattr(mod, "handle", None)) is None:
+    if not (has_handle or has_dunder or rules):
+        # 插件该有的都没有，源码也挑不出插件痕迹 → 多半是"从别的工具里裸调 check()"抓错了模块。
+        # 这时只回一条指路提示，别误报"缺 handle / 缺 dunder"（那是把调用者当插件了）。
+        if not problems:
+            return ["这看起来不是插件模块（不是「缺东西」）：请用 sdk.check(globals()) 传入插件本身"]
+        return problems                     # 引了 astercore / 用了类插件 → 确实像插件，照报"缺东西"
+    if not has_handle and not rules:
         problems.append("没有 handle：既没手写，也没有任何 @sdk.rule(...) 生成")
     for field in ("__plugin_name_cn__", "__plugin_name_en__"):
         got = mod.get(field) if isinstance(mod, dict) else getattr(mod, field, None)

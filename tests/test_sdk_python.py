@@ -255,26 +255,56 @@ class SdkInHostTest(unittest.TestCase):
         self.assertFalse(calls)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class ScaffoldTest(unittest.TestCase):
     """脚手架生成的插件必须**开箱可用**：能落地、能离线自测、契约检查通过"""
+
+    def _scaffold(self, out: Path) -> Path:
+        r = subprocess.run([sys.executable, str(SCAFFOLD), "签到示例",
+                            "--name-en", "sign_demo", "--dir", str(out)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue((out / "sign_demo.py").is_file(), r.stdout)
+        self.assertTrue((out / "nap_sdk.py").is_file(), "SDK 要一起拷过去，否则插件 import 失败")
+        return out / "sign_demo.py"
 
     def test_generated_plugin_is_usable(self):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "plugins"
-            r = subprocess.run([sys.executable, str(SCAFFOLD), "签到示例",
-                                "--name-en", "sign_demo", "--dir", str(out)],
-                               capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertTrue((out / "sign_demo.py").is_file(), r.stdout)
-            self.assertTrue((out / "nap_sdk.py").is_file(), "SDK 要一起拷过去，否则插件 import 失败")
+            self._scaffold(out)
             # 生成物的离线自测：跑得起来 + check 通过（退出码 0 就是"检查为空"）
             r2 = subprocess.run([sys.executable, str(out / "sign_demo.py")],
                                 capture_output=True, text=True, cwd=str(out))
             self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
             self.assertIn("通过", r2.stdout, r2.stdout)
+
+    def test_generated_plugin_passes_check_from_outside(self):
+        """回归：脚手架生成物被**外部工具**检查时必须零问题
+
+        （曾经的毛病：`@sdk.rule(...)` / `sdk.set_meta(globals(), ...)` 这种带 sdk. 前缀的
+         写法，外部工具裸调 check() 会抓错模块，反过来报"没有 handle / 缺 dunder"）
+        """
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "plugins"
+            plugin = self._scaffold(out)
+            chk = subprocess.run([sys.executable, str(SDK_SRC), "--run", str(plugin),
+                                  "--check-only"], capture_output=True, text=True, cwd=str(out))
+            self.assertEqual(chk.returncode, 0, chk.stdout + chk.stderr)
+            self.assertNotIn("检查：-", chk.stdout, f"生成物不该有任何问题：{chk.stdout}")
+
+    def test_bare_check_does_not_false_alarm(self):
+        """裸调 check()（进程里没有插件）只该回一条"拿不到模块"的提示，不许误报缺东西"""
+        with tempfile.TemporaryDirectory() as td:
+            probe = Path(td) / "probe.py"
+            probe.write_text(
+                "import sys\n"
+                f"sys.path.insert(0, {str(SDK_SRC.parent)!r})\n"
+                "import nap_sdk as sdk\n"
+                "print('CHECK:', sdk.check())\n", encoding="utf-8")
+            r = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("拿不到插件模块", r.stdout, r.stdout)
+            self.assertNotIn("没有 handle", r.stdout, f"不该误报：{r.stdout}")
+            self.assertNotIn("__plugin_name_cn__", r.stdout, f"不该误报：{r.stdout}")
 
     def test_refuses_overwrite_without_force(self):
         with tempfile.TemporaryDirectory() as td:
@@ -284,3 +314,7 @@ class ScaffoldTest(unittest.TestCase):
             again = subprocess.run(args, capture_output=True, text=True)
             self.assertEqual(again.returncode, 1, "同名文件不该被静默覆盖")
             self.assertIn("--force", again.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

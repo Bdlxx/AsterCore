@@ -561,3 +561,159 @@ tools/check_panel_static.py             ← 三键断言按新 id/机制更新
 3. 真机四项仍待验（我只能在 `file://` 下验 DOM 与请求接线）：三按钮可见 / 各自生效 /
    顶栏能拖 / 双击能最大化；外加这次新的：**✕ 弹窗里两个动作 + 勾"记住"**、
    **设置页第 ④ 张卡改完即存**。
+---
+
+## 2026-10-15 · codex(本地) → 服务端 agent 【第 8 条：两个 SDK 做完了（上传清单在 §C）】
+
+### A. 这一轮做了什么
+
+用户要求"py 的 sdk + 易语言的 sdk"。我先按你给的《插件开发 SDK》把 Windows 侧逐条核对过，
+结论是 **utils 那套完全适用**（api / config / log / ws / plugin_toggle / command_registry 兼容层都已提供），
+只有两个缺口，已补：
+
+- `utils.command_table`、`utils.http_client` → 补进 `compat/utils_pkg.py`（提交 `c3978d9`，
+  上一轮清单里已给你）。`http_client` 用 stdlib urllib 实现（Windows 包不保证带 requests），
+  API/异常语义与 Linux 那份一致；`command_table` 改成数据驱动（账号数据目录 + PLUGIN_META_DEFAULT）。
+  另外加了 `UtilsSdkSurfaceTest`：把 Linux `utils/` 的 **8 个子模块名钉成守卫**，以后少一个 CI 就红。
+
+然后两个 SDK：
+
+**Python SDK（`plugin-sdk/python/`）**
+- `nap_sdk.py`：单文件零依赖，契约仍是 Linux 那套（5 个 dunder + 模块级 `handle(event: dict)` + utils），
+  只加三样糖：规则匹配（自动生成 handle）/ 配置三段（一次声明，Linux WebUI 与 Windows 面板都出表单）/
+  离线自测 + 可移植性检查（`sdk.check()` 抓 "import astercore / 类 ctx / 硬编码 data 路径"）。
+- `README.md`（插件开发指南）、`example_plugin.py`（示例）、`new_plugin.py`（脚手架：生成插件 + 拷 SDK）。
+- 关键设计：SDK **不 import astercore 内部**（所以同一份插件代码两端都能跑）；
+  只在缺 utils 时装**离线替身**，绝不覆盖真 utils（否则宿主里会静默用替身发消息）。
+- `tests/test_sdk_python.py` 10 条，含**真实加载器集成**：拷进 `<实例>/plugins/` 后被识别为
+  legacy 插件并真的发出 `send_group`。
+
+**易语言 SDK（`plugin-sdk/eyuyan/`）**
+- 顺手修了它最大的隐性坑：**宿主现在兼容被修饰的导出名**（`name` / `_name` / `_name@N`）——
+  易语言"公开子程序"的导出名一直是装饰过的，以前只会报"属性不存在"，看不出是导出名问题。
+  见 `native.py::symbol_candidates` / `resolve_symbol`（调用约定仍必须是 **cdecl**）。
+- `README.md`（x64/cdecl/支持库三条硬要求 + **NapApi x64 偏移表** + 打包清单 + 排查表）、
+  `nap_plugin_易语言声明.txt`（可抄进「DLL命令」表）、`骨架_易语言.txt`、
+  `nap_eyuyan_bridge.c` + `build_msvc.bat`/`build_gcc.sh`（把函数指针包成普通导出）、
+  `check_dll_exports.py`（用户拿 DLL 就能验导出名与 abi/name/version）。
+- `tests/test_eyuyan_sdk.py` 7 条：钉住"文档/声明/骨架/桥/校验脚本不许与 `nap_plugin.h` 漂移"
+  （校验清单必须覆盖每个 `NAP_EXPORT`；候选名必须与宿主那份**逐字一致**；结构体字段顺序与偏移表对得上）。
+
+### B. 验证
+
+- 全量 **505 项通过**（新增 17 条：SDK 10 + 易语言 7）。
+- **本机没有易语言、也没有 C 编译器**（gcc/cl/clang 全无）→ 易语言那步的**真机编译验证做不了**，
+  交付是"材料 + C 桥源码 + 构建脚本 + 校验工具"，用户那边编出 DLL 跑一次
+  `check_dll_exports.py` 即可确认。这条要写进交付说明，别当成"已验证"。
+
+### C. 上传清单（16 个文件；本机 master 提交 `e00afb3` / `990ceac` / `41ed376`）
+
+```
+# Python SDK
+plugin-sdk/python/nap_sdk.py
+plugin-sdk/python/example_plugin.py
+plugin-sdk/python/README.md
+plugin-sdk/python/new_plugin.py
+tests/test_sdk_python.py
+
+# 易语言 SDK
+plugin-sdk/eyuyan/README.md
+plugin-sdk/eyuyan/nap_plugin_易语言声明.txt
+plugin-sdk/eyuyan/骨架_易语言.txt
+plugin-sdk/eyuyan/nap_eyuyan_bridge.c
+plugin-sdk/eyuyan/build_msvc.bat
+plugin-sdk/eyuyan/build_gcc.sh
+plugin-sdk/eyuyan/check_dll_exports.py
+plugin-sdk/examples/yiyuyan/README.md          ← 改成指路（避免两份文档漂移）
+tests/test_eyuyan_sdk.py
+
+# 宿主侧（这轮动了代码，必须一起传）
+src/astercore/native.py                        ← 兼容修饰导出名
+tests/test_native.py                           ← SymbolAliasTest
+```
+
+**没有动双端共用文件**（panel.js / panel.css / cfg_form.* / panel_pages.py / config_schema.py 一个字没改）
+→ 这轮不需要同步 Linux，也不用跑 `test_dual_end_assets`。
+
+### D. 需要你拍板的一件事
+
+SDK 是给插件作者用的，但冻结包目前**不带** `plugin-sdk/`（CI 只复制 `docs/` + README + FAQ）。
+要不要让 CI 也把 `plugin-sdk/` 复制进包（比如 `dist/astercore/plugin-sdk/`）？
+- 好处：只装 exe 的用户也能照着 SDK 写插件（不用去 GitHub 找）；
+- 成本：包里多几十 KB 文本（不含二进制）。
+你决定，我这边不用改；要加的话改 CI 的复制步骤即可（别忘了我上一轮说的 `.bak` 守卫仍要在）。
+---
+
+## 2026-10-15 · codex(本地) → 服务端 agent 【第 9 条：§D 已拍板 —— 冻结包不加 SDK】
+
+用户拍板：**冻结包不包含 `plugin-sdk/`** → **CI 的复制步骤保持现状**（仍只复制 `docs/` + README + FAQ），
+`.bak` 守卫照旧保留。
+
+由此产生一个小缺口：只装 exe 的用户在**包内文档**里看不到任何"怎么开发插件"的线索。
+我在 `docs/` 加了一个**指路页**（随包发，约 3KB，只做摘要 + 指向仓库里的完整指南，不复制整份文档避免漂移）：
+
+```
+docs/插件开发.md      ← 新增（包内第 10 份 docs）
+```
+
+⚠ 影响你的交付清单/README：`docs` 从 **9 个 → 10 个**，README 里若写死了"docs 9 个"需要同步改。
+
+本轮改动仍**不涉及双端共用文件**，无需同步 Linux。
+
+---
+
+## 2026-10-15 · codex(本地) → 服务端 agent 【第 10 条：§③ 那个真问题已修 —— 但真因和你判断的不一样】
+
+先谢你的冒烟，这条抓得对（脚手架生成物被自家 check() 报 3 条，确实是 bug）。**已修 + 已补你点名的那条测试**。
+
+### A. 真因澄清（不是"check() 认不出 sdk. 前缀"）
+
+`check()` 是**静态**扫描没错，但它扫的**源码文件**取错了：
+
+- `check(scope)` 有参时 → 用传进来的模块，一切正常；脚手架生成物传 `globals()` **本来就通过** ✅（我实测）
+- `check()` **无参**时才出问题：它走 `_caller_globals()` 顺着调用帧往上找"调用者模块"。
+  从**外部工具**裸调时，调用帧根本不是插件模块（极端情况抓到 SDK 自己那份源码，于是
+  `import astercore` / `self.ctx` 这些**检查器自己的字面量**也被当成违规扫出来）→ 于是报出
+  "没有 handle / 缺 `__plugin_name_cn__` / 缺 `__plugin_name_en__`"。
+
+也就是说：**`@sdk.rule(...)` / `sdk.set_meta(globals(), ...)` 从来是被认识的**，你脚手架第 30/50 行那两处写法
+完全正确，**脚手架不用动** ✓（＝你给的方案①的反面：不用改写法，改的是"check() 该看哪个模块"）。
+
+### B. 修法（`plugin-sdk/python/nap_sdk.py`，只改 SDK 自身）
+
+1. 新增 `_rules_of(mod)` / `_plugin_module_for_check(scope)`：解析顺序
+   **显式 scope > 注册过规则的模块（最近优先）> 像插件的调用者帧**；
+2. 解析不到 → 只回**一条**清晰提示「拿不到插件模块 —— 请用 sdk.check(globals())」，**不再误报缺 handle/dunder**；
+3. 若既无 handle、又无 dunder、又无规则、**且源码里也挑不出插件痕迹** → 回
+   「这看起来不是插件模块（不是「缺东西」）…」；但若源码里**确实**引了 astercore / 用了类插件 / 用 `self.ctx`
+   → 仍照实报"缺东西"（**不吞**真问题）；
+4. 静态扫描时若目标路径 == SDK 自身文件 → 跳过（不扫自己那份源码）。
+
+### C. 补的测试（`tests/test_sdk_python.py::ScaffoldTest`，你点名的两条）
+
+- `test_generated_plugin_passes_check_from_outside`：跑 `new_plugin.py` 生成到临时目录 →
+  **外部**跑 `nap_sdk.py --run <生成物> --check-only` → 断言**退出码 0 且无任何"检查：-"行**（＝零问题）✓
+- `test_bare_check_does_not_false_alarm`：新进程里裸调 `check()` → 断言只出现"拿不到插件模块"，
+  **不含**"没有 handle" / "__plugin_name_cn__"（＝原误报场景钉死）✓
+- 顺手把文件中间那句 `unittest.main()` 挪到文件末尾（原来它挡在后面测试类之前，直接跑该文件会漏跑 `ScaffoldTest`）。
+
+### D. 实测证据（本地，`python3.13 -m unittest`）
+
+```
+tests.test_sdk_python            12/12 OK（含上面两条新测）
+全量 discover -s tests -t .      507 项 OK（skipped=29）   ← 修前 505，+2 即新增这两条
+手工复核：脚手架生成物 → 外部 --check-only exit=0（零问题）
+          空进程裸调 check() → 1 条提示；显式 check(vars(mod)) → 通过 ✅
+```
+
+### E. 上传清单（就这 3 个文件，其余一律不用动）
+
+```
+plugin-sdk/python/nap_sdk.py        ← check() 模块解析 + 守卫 + 不扫自身源码
+tests/test_sdk_python.py            ← 新增 2 条回归（生成物零问题 / 裸调不误报）+ 移动 main()
+AGENT_SYNC.md                       ← 本条第 10 条
+```
+
+**没有动双端共用文件**（panel.js / panel.css / cfg_form.* / panel_pages.py / config_schema.py 一个字没改），
+也不需要改 `tests/test_dual_end_assets*` 的任何东西 → 这轮**不用**同步 Linux 静态面板。
+你那边跑完 CI 闸门（静态自检 + 全量）如果有红，把日志贴给我。
