@@ -434,3 +434,48 @@ class LegacyMetaAndReloadTest(unittest.TestCase):
             return names
         names = asyncio.run(_go())
         self.assertEqual(names, sorted(names), f"加载顺序应全局按名排序: {names}")
+
+
+class NapcatCacheHostTest(unittest.TestCase):
+    """图片缓存目录默认值：装了 NapCat 时必须指向它的真实缓存目录（否则插件发的图找不到）"""
+
+    def setUp(self):
+        from astercore.compat import paths as P
+        self.P = P
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self._env = os.environ.pop("ASTERCORE_NAPCAT_CACHE", None)
+
+    def tearDown(self):
+        if self._env is not None:
+            os.environ["ASTERCORE_NAPCAT_CACHE"] = self._env
+        self.tmp.cleanup()
+
+    def _install_fake_napcat(self):
+        """造一个"官方 Shell 包结构"：<组件目录>/napcat/napcat.mjs"""
+        d = self.base / "components" / "napcat" / "napcat"
+        d.mkdir(parents=True)
+        (d / "napcat.mjs").write_text("// fake", encoding="utf-8")
+        (d / "cache" / "images").mkdir(parents=True, exist_ok=True)
+        return d
+
+    def test_env_override_wins(self):
+        os.environ["ASTERCORE_NAPCAT_CACHE"] = "~/custom/cache"
+        try:
+            got = self.P.default_cache_host(self.base)
+            self.assertTrue(str(got).endswith("custom/cache") or str(got).endswith("custom\\cache"))
+            self.assertNotIn("~", str(got), "波浪号要展开")
+        finally:
+            os.environ.pop("ASTERCORE_NAPCAT_CACHE", None)
+
+    def test_installed_napcat_uses_its_real_cache(self):
+        d = self._install_fake_napcat()
+        got = self.P.default_cache_host(self.base)
+        self.assertEqual(got, d / "cache" / "images",
+                         "装了 NapCat 就要指向 <组件目录>/napcat/cache/images")
+
+    def test_fallback_when_not_installed(self):
+        got = self.P.default_cache_host(self.base)
+        self.assertEqual(got, Path.home() / "napcat" / "cache" / "images",
+                         "没装组件时回落到老路径（Linux 端行为不变）")
+

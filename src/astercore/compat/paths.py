@@ -29,13 +29,38 @@ def is_windows() -> bool:
     return os.name == "nt" or sys.platform.startswith("win")
 
 
-def default_cache_host() -> Path:
-    """本机 NapCat 图片缓存目录（老插件写文件也在这里）"""
+def default_cache_host(base_dir=None) -> Path:
+    """图片缓存的**宿主机目录**（老插件把图片写到 `/app/cache/images`，靠 path_map 映射过来）。
+
+    解析顺序（先命中先用）：
+      1. 环境变量 `ASTERCORE_NAPCAT_CACHE`（最高优先，容器/测试用）
+      2. **本机 NapCat 组件的真实缓存目录** `<组件目录>/napcat/cache/images`
+         （官方 Shell 包的工作目录是 napcat.mjs 所在处，config/logs/cache 都挂它下面，
+          见 components.napcat_work_dir）
+      3. 回落 `~/napcat/cache/images`（Linux 端/老部署沿用 —— 行为不变）
+
+    ⚠ 为什么必须优先第 2 条：按 `~/napcat/...` 写的话，图片会落在 NapCat **根本不看**的
+    目录里 —— 插件"发了图"但消息里取不到文件（默认映射对不上）。
+    需要手工指定时仍可用 runtime.json 的 `NAPCAT_CACHE_HOST`（由 ensure_cache_dir /
+    path_map 读取，优先级高于本函数的默认值）。
+    """
     env = os.environ.get("ASTERCORE_NAPCAT_CACHE")
     if env:
         return Path(env).expanduser()
+    try:
+        from astercore import components as _C
+        from astercore.paths import app_base_dir as _abd
+        base = Path(base_dir) if base_dir is not None else _abd()
+        comp_root = _C.component_dir(base, "napcat")
+        work = _C.napcat_work_dir(base) if hasattr(_C, "napcat_work_dir") else comp_root
+        # 判据用"NapCat 本体在不在"（napcat.mjs），而不是启动器 exe ——
+        # 缓存目录取决于运行时本体，启动器缺失也可能已经解压好了
+        if (work / "napcat.mjs").is_file() or (_C.is_installed(_C.get_component("napcat"), base)
+                                               and work.is_dir()):
+            return work / "cache" / "images"
+    except Exception:                       # noqa: BLE001 兼容层不能被路径问题拖死
+        pass
     return Path.home() / "napcat" / "cache" / "images"
-
 
 def _cfg(rt, key: str, default=None):
     try:
