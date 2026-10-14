@@ -26,6 +26,53 @@ log = logging.getLogger("astercore.web.guide")
 _JOBS: dict[str, dict[str, Any]] = {}
 
 
+def jobs_snapshot() -> dict[str, dict[str, Any]]:
+    """当前安装任务快照（面板顶栏 / 引导页轮询用；复制一份，别把内部状态递出去）"""
+    return {k: dict(v) for k, v in _JOBS.items()}
+
+
+def clear_jobs() -> None:
+    _JOBS.clear()
+
+
+def start_install(key: str, base_dir: str | Path, *, url: str | None = None,
+                  zip_path: str | None = None) -> dict[str, Any]:
+    """后台下载并解压一个组件，进度写进 _JOBS（**HTTP 路由与桌面 RPC 共用这一份**）。
+
+    step: downloading（带 percent）→ extracting → done / failed。
+    桌面 RPC 以前是自己起线程调 provision()、不记任务，
+    结果 file:// 模式下顶栏永远看不到进度（也没法区分"解压中"）。
+    """
+    comp = C.get_component(key)                       # 未知组件 → KeyError，路由转 400
+    job = _JOBS.setdefault(comp.key, {})
+    if job.get("running"):
+        return {"started": False, "msg": "已有安装任务在进行", "job": dict(job)}
+    job.clear()
+    job.update(running=True, step="downloading", got=0, total=0, percent=0, msg="")
+
+    def _progress(got: int, total: int) -> None:
+        job.update(got=int(got), total=int(total), step="downloading",
+                   percent=int(got * 100 / total) if total else 0)
+
+    def _stage(name: str) -> None:
+        job["step"] = name
+        if name == "extracting":
+            job["percent"] = 100
+
+    def _run() -> None:
+        try:
+            ok, msg = C.provision(comp, base_dir, url=url, zip_path=zip_path,
+                                  progress=_progress, stage=_stage)
+            job.update(running=False, step="done" if ok else "failed", msg=msg)
+        except Exception as e:                       # noqa: BLE001 后台失败要留痕
+            log.exception("组件安装失败: %s", comp.key)
+            job.update(running=False, step="failed",
+                       msg=f"{type(e).__name__}: {e}")
+
+    threading.Thread(target=_run, daemon=True, name=f"guide-install-{comp.key}").start()
+    return {"started": True, "job": dict(job)}
+
+
 def _ok(data: Any = None):
     from flask import jsonify
     return jsonify({"ok": True, "data": data})
@@ -36,8 +83,23 @@ def _err(msg: str, code: int = 400):
     return jsonify({"ok": False, "error": msg}), code
 
 
-    # 供桌面 RPC 复用的接口（file:// 模式下 fetch 会被 Transport 转成 hub 方法）
-    return {"create_account": _create_account_impl}
+def _qr_payload(base: str, key: str) -> dict[str, Any]:
+    """qr_code() 只给"图片路径 / 文本"，不给能直接内联的地址。
+    这里补一个 data_url：桌面端是 file://，<img src="/api/..."> 走不通；
+    data URL 在桌面与浏览器两端都能直接显示（面板引导页要用）。"""
+    q = C.qr_code(base, key)
+    if q.get("kind") == "image":
+        try:
+            import base64
+            import mimetypes
+            p = Path(str(q["path"]))
+            mime = mimetypes.guess_type(p.name)[0] or "image/png"
+            q["data_url"] = "data:%s;base64,%s" % (
+                mime, base64.b64encode(p.read_bytes()).decode("ascii"))
+        except (OSError, KeyError):                     # noqa: PERF203 读不到就退回只有路径
+            pass
+    return q
+
 
 def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
                      state: Any | None = None,
@@ -108,16 +170,20 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
             return _err(msg, 400)
         return _ok({"mode": _get_mode(), "msg": msg})
 
-    @app.get("/api/guide/status")
-    def guide_status():
+    def _status_payload() -> dict[str, Any]:
+        """组件 + 安装任务快照（页面、顶栏、桌面 RPC 都读这一份）"""
         base = get_base()
-        return _ok({
+        return {
             "supported": True,
             "base_dir": str(base),
             "mode": _get_mode(),
             "components": {k: C.host_status(c, base) for k, c in C.COMPONENTS.items()},
-            "jobs": dict(_JOBS),
-        })
+            "jobs": jobs_snapshot(),
+        }
+
+    @app.get("/api/guide/status")
+    def guide_status():
+        return _ok(_status_payload())
 
     @app.post("/api/guide/discover")
     def guide_discover():
@@ -136,34 +202,12 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
     @app.post("/api/guide/install")
     def guide_install():
         b = _body()
-        comp, bad = _comp_or_400(str(b.get("key") or ""))
-        if bad:
-            return bad
-        job = _JOBS.setdefault(comp.key, {})
-        if job.get("running"):
-            return _ok({"started": False, "msg": "已有安装任务在进行", "job": job})
-        job.clear()
-        job.update(running=True, step="downloading", got=0, total=0, msg="")
-
-        def _progress(got: int, total: int) -> None:
-            job.update(got=got, total=total)
-
-        base = get_base()
-        url = b.get("url") or None
-        zip_path = b.get("zip") or None
-
-        def _run() -> None:
-            try:
-                ok, msg = C.provision(comp, base, url=url, zip_path=zip_path,
-                                      progress=_progress)
-                job.update(running=False, step="done" if ok else "failed", msg=msg)
-            except Exception as e:                       # noqa: BLE001 后台失败要留痕
-                log.exception("组件安装失败: %s", comp.key)
-                job.update(running=False, step="failed",
-                           msg=f"{type(e).__name__}: {e}")
-
-        threading.Thread(target=_run, daemon=True, name=f"guide-install-{comp.key}").start()
-        return _ok({"started": True, "job": job})
+        try:
+            return _ok(start_install(str(b.get("key") or ""), get_base(),
+                                     url=b.get("url") or None,
+                                     zip_path=b.get("zip") or None))
+        except KeyError as e:
+            return _err(str(e), 400)
 
     # ---------------- 账号：一键建账号 + 账号级连接方式 ----------------
     _BACKENDS = [
@@ -391,7 +435,7 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
         comp, bad = _comp_or_400(key)
         if bad:
             return bad
-        q = C.qr_code(get_base(), comp.key)
+        q = _qr_payload(get_base(), comp.key)
         if q.get("kind") == "image" and request.args.get("raw") == "1":
             from flask import send_file
             return send_file(q["path"])
@@ -426,8 +470,20 @@ def add_guide_routes(app, base_dir: Callable[[], Path] | None = None,
         if not ok:
             return _err(msg, 409)
         return _ok({"ok": True, "msg": msg, "config": cfg_res,
+                    "account_id": (cfg_res or {}).get("account_id", ""),
                     "status": C.host_status(comp, base),
-                    "qr": C.qr_code(base, comp.key)})
+                    "qr": _qr_payload(base, comp.key)})
+
+    # 桌面 file:// 模式的 RPC（launch.py）复用这同一份实现：
+    # 以前那边自己起线程调 provision()、不记任务，也没有 _create_account_impl，
+    # 于是"进度看不见 + 一键建账号直接报不支持"。这里把入口交出去，两边永不跑偏。
+    return {
+        "status": _status_payload,
+        "install": lambda b=None: start_install(
+            str((b or {}).get("key") or ""), get_base(),
+            url=(b or {}).get("url"), zip_path=(b or {}).get("zip")),
+        "create_account": _create_account_impl,
+    }
 
 
 GUIDE_HTML = """<!doctype html>

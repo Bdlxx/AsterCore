@@ -7,6 +7,7 @@ from __future__ import annotations
 import ctypes
 import json
 import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,75 @@ from .core.plugin import HANDLE_HANDLED, HANDLE_NOT_HANDLED, PluginMeta
 log = logging.getLogger("astercore.native")
 
 _ABI_VERSION = 1
+
+# ---- 平台动态库格式守卫 ----
+# 为什么要有这一层：ctypes.CDLL 把"文件格式不对"直接交给系统加载器，而 Windows
+# 加载器对 ELF（Linux .so）**不抛异常，弹模态对话框**：
+#     python.exe - 损坏的映像 … libnap_hello.so 没有被指定在 Windows 上运行 (0xc000012f)
+# 进程就停在对话框上等人点"确定" —— 测试、面板自检、首启探测会一起卡死。
+# 实测：源目录里带着 Linux 编出来的 plugin-sdk/examples/c-sample/libnap_hello.so 时，
+# 跑 tests/test_native.py 必弹框。所以加载前先看文件头，格式不符就抛普通异常。
+_ELF_MAGIC = b"\x7fELF"
+_MACHO_MAGICS = (b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+                 b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+                 b"\xca\xfe\xba\xbe")
+_FORMAT_CN = {"pe": "Windows DLL(.dll)", "elf": "Linux 动态库(.so)",
+              "macho": "macOS 动态库(.dylib)", "unknown": "未知格式"}
+
+
+def lib_format(path: str | Path) -> str:
+    """按文件头判断动态库格式：'pe' | 'elf' | 'macho' | 'unknown'"""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(4)
+    except OSError:
+        return "unknown"
+    if head[:2] == b"MZ":
+        return "pe"
+    if head == _ELF_MAGIC:
+        return "elf"
+    if head in _MACHO_MAGICS:
+        return "macho"
+    return "unknown"
+
+
+def expected_lib_format() -> str:
+    """当前平台能加载的动态库格式"""
+    if sys.platform == "win32":
+        return "pe"
+    if sys.platform == "darwin":
+        return "macho"
+    return "elf"
+
+
+def check_platform_lib(path: str | Path) -> None:
+    """加载前校验：库不存在 / 格式与当前系统不符 → 抛清晰异常（不弹系统对话框）"""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"原生插件库不存在: {p}")
+    kind = lib_format(p)
+    want = expected_lib_format()
+    if kind != want:
+        raise RuntimeError(
+            f"{p.name} 是 {_FORMAT_CN.get(kind, kind)}，当前系统（{sys.platform}）"
+            f"只能加载 {_FORMAT_CN[want]}；请用本平台编译器重新构建该插件"
+            f"（构建命令见 plugin-sdk/examples/c-sample/nap_hello.c 头部注释）")
+
+
+def _load_library(path: str | Path) -> ctypes.CDLL:
+    """ctypes.CDLL，Windows 上顺带把加载器硬错误降级成异常。
+
+    SetErrorMode(SEM_FAILCRITICALERRORS) 只影响"加载器是否弹框"，加载完立刻
+    恢复原值，不改变进程其余行为。
+    """
+    if sys.platform == "win32":
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        old = kernel32.SetErrorMode(0x0001)      # SEM_FAILCRITICALERRORS
+        try:
+            return ctypes.CDLL(str(path))
+        finally:
+            kernel32.SetErrorMode(old)
+    return ctypes.CDLL(str(path))
 
 
 class NapApi(ctypes.Structure):
@@ -92,7 +162,8 @@ class NativePlugin:
     def load(self) -> None:
         if self._lib is not None:
             return
-        self._lib = ctypes.CDLL(str(self.lib_path))
+        check_platform_lib(self.lib_path)
+        self._lib = _load_library(self.lib_path)
         # 校验 ABI
         self._lib.nap_plugin_abi_version.restype = ctypes.c_int
         ver = self._lib.nap_plugin_abi_version()

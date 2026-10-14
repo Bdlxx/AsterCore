@@ -163,18 +163,34 @@ def main() -> int:
                   "运行中" in (page.text_content("#statusTag") or ""),
                   (page.text_content("#statusTag") or "").strip())
 
-            print("\n[2] 侧边栏导航与六个页面")
-            nav = page.eval_on_selector_all(".nav-item", "els=>els.map(e=>e.textContent.trim())")
-            check("导航项与 Linux 同一套结构（桌面端多账号/设置）",
-                  len(nav) >= 6 and any("概览" in n for n in nav), nav)
+            print("\n[2] 侧边栏导航与页面")
+            nav = page.eval_on_selector_all("#sidebarNav .nav-item", "els=>els.map(e=>e.textContent.trim())")
+            check("侧栏只留日常页（概览 / NapCat / 插件配置 / 运行日志）",
+                  len(nav) == 4 and any("概览" in n for n in nav) and any("NapCat" in n for n in nav), nav)
+            check("NapCat 入口在「概览」下面且用官方图标",
+                  page.eval_on_selector("#sidebarNav .nav-item[data-page='napcat'] img", "e=>e.src")
+                  .endswith("/napcat.png")
+                  and page.eval_on_selector("#sidebarNav .nav-item[data-page='napcat'] img",
+                                            "e=>e.naturalWidth > 0"))
+            check("左下角齿轮卡片 = 更新 / 设置 / 引导",
+                  page.eval_on_selector_all("#appMenu .app-menu-item", "els=>els.map(e=>e.textContent.trim())")
+                  == ["更新", "设置", "引导"])
             pages = {"dashboard": ["#dashBotVal", ".stat-card"], "accounts": ["#ac_id", ".stat-card"],
                      "config": ["#configForm", "#tab-json"], "logs": ["#logViewer", "#logLinesSel"],
-                     "settings-runtime": ["#rt_mode"], "settings-auth": ["#au_mode"]}
+                     "settings": ["#au_mode", "#sp_port"],
+                     "napcat": ["#ncStatus", "[data-act='gd-install']"],
+                     "guide-page": ["#gdDir", "[data-act='gd-install']", "[data-act='gd-host']"]}
             for p, sels in pages.items():
                 page.evaluate("p => PANEL.goPage(p)", p)
                 page.wait_for_timeout(1400)
                 got = page.evaluate("s => s.map(x => !!document.querySelector(x))", sels)
                 check(f"页面[{p}] 渲染", all(got), f'锚点={got} crumb={page.text_content("#breadcrumb").strip()}')
+            check("引导第①步是在应用内下载并解压（不再跳官网）",
+                  page.eval_on_selector_all("[data-act='gd-open']", "e=>e.length") == 0
+                  and "解压" in page.text_content("#pageContent"))
+            check("顶栏下载进度（下载中 x% / 解压中）已接线",
+                  page.evaluate("() => jobText({step:'downloading',percent:42}) === '下载中 42%'"
+                                " && jobText({step:'extracting'}) === '解压中…'"))
             check("逐页切换零 JS 异常", not errs, errs[:2])
 
             print("\n[3] 多账号：切换 / 新建 / 编辑 / 删除")
@@ -185,17 +201,38 @@ def main() -> int:
             check("点账号切换成功（侧栏身份同步）",
                   "依星" in page.text_content("#botName"), page.text_content("#botName"))
 
+            # 弹窗两步走：先选连接方式，选完才显示对应填写项（用户要求）
+            page.click("[data-act='acct-add']")
+            page.wait_for_timeout(600)
+            check("添加账号：先选连接方式，填写项还没出现",
+                  page.is_visible("#acctStep1") and not page.is_visible("#acctFields"))
+            page.click("#acctStep1 button:has-text('内置协议')")
+            page.wait_for_timeout(400)
+            check("选「内置协议」→ 显示填写项、不显示 ws/token",
+                  page.is_visible("#acctFields") and not page.is_visible("#acctConnFields")
+                  and page.eval_on_selector("#ac_mode", "e=>e.value") == "lagrange")
+            # 换回 NapCat 得重新打开（选完那一步就收起来了，这是设计如此）
+            page.click("#acctDlg button:has-text('取消')")
+            page.wait_for_timeout(400)
+            page.click("[data-act='acct-add']")
+            page.wait_for_timeout(600)
+            page.click("#acctStep1 button:has-text('NapCat')")
+            page.wait_for_timeout(300)
+            check("选「NapCat」→ 显示 ws/token 填写项",
+                  page.is_visible("#acctConnFields")
+                  and page.eval_on_selector("#ac_mode", "e=>e.value") == "onebot")
+
             page.evaluate("""() => {
                 const set = (id, v) => { const el = document.getElementById(id); el.value = v; };
                 set('ac_id', '%s'); set('ac_name', '第二个账号');
                 set('ac_ws', 'ws://127.0.0.1:3999'); set('ac_http', 'http://127.0.0.1:3998');
             }""" % OTHER)
-            page.click("[data-act='create-account']")
+            page.click("[data-act='save-account']")
             page.wait_for_timeout(1500)
             accs = page.eval_on_selector_all("[data-acct-pick]", "els=>els.map(e=>e.getAttribute('data-acct-pick'))")
             check("新建账号出现在列表", OTHER in accs, accs)
 
-            page.click(f"[data-act='edit-account'][data-key='{OTHER}']")
+            page.click(f"[data-act='acct-edit'][data-key='{OTHER}']")
             page.wait_for_timeout(1500)
             check("编辑态表单预填现值",
                   page.eval_on_selector("#ac_id", "e=>e.value") == OTHER
@@ -243,15 +280,21 @@ def main() -> int:
                   (page.text_content("#logTotalInfo") or "").strip())
             check("行数下拉可用", page.eval_on_selector("#logLinesSel", "e=>!!e"))
 
-            print("\n[6] 运行方式 / 安全设置可保存")
-            page.evaluate("() => PANEL.goPage('settings-auth')")
+            print("\n[6] 设置页改完即存（无保存按钮）")
+            page.evaluate("() => PANEL.goPage('settings')")
+            page.wait_for_timeout(1500)
+            check("设置页没有保存按钮", page.eval_on_selector_all("[data-act^='save-']", "e=>e.length") == 0)
+            check("端口框默认留空 + 灰色占位",
+                  page.eval_on_selector("#sp_port", "e=>e.value === '' && !!e.placeholder"))
+            # 先填密码（此时 mode 仍是 none，等于只设密码），再把鉴权方式改成密码 ——
+            # 顺序反过来的话后端会以"没填密码"拦下（这正是我们要的防锁门行为）
+            page.eval_on_selector("#au_pwd",
+                                  "e=>{e.value='test-password-123'; e.dispatchEvent(new Event('change',{bubbles:true}))}")
             page.wait_for_timeout(1500)
             page.select_option("#au_mode", "password")
-            page.eval_on_selector("#au_pwd", "e=>{e.value='test-password-123';}")
-            page.click("#actionSaveBtn")
             page.wait_for_timeout(1800)
             auth = json.loads((base / "web_auth.json").read_text(encoding="utf-8"))
-            check("安全设置已落盘", auth.get("mode") == "password", auth.get("mode"))
+            check("安全设置自动落盘", auth.get("mode") == "password", auth.get("mode"))
 
             print("\n[7] 登录闸门（改成 password 后要求登录）")
             page.context.clear_cookies()

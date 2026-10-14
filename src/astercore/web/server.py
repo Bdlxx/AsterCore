@@ -18,7 +18,10 @@ from typing import Any, Awaitable, Callable
 log = logging.getLogger("astercore.web")
 
 try:
-    from flask import Flask, jsonify, request, send_from_directory
+    # session 必须模块级导入：_page_ctx 要读会话（鉴权=密码/令牌时判断是否已登录）。
+    # 只在 _setup_auth_gate 里局部导入的话，_page_ctx 引用它会 NameError，
+    # 表现是"开了密码鉴权之后，设置页整页 500"（默认 none 模式走不到这行，所以很难发现）。
+    from flask import Flask, jsonify, request, send_from_directory, session
 except ImportError:  # pragma: no cover
     Flask = None
 
@@ -106,6 +109,13 @@ class WebPanel:
         @app.get("/panel.css")
         def shared_panel_css():
             return send_from_directory(self.static_dir, "panel.css")
+
+        # NapCat 官方图标（侧栏常驻入口 + 账号弹窗的连接方式选择卡用）：
+        # 取自官方文档站 favicon（https://napneko.github.io/favicon.ico），
+        # 原样转 PNG 放进 static/，随包分发（spec 收的是整个 static 目录）。
+        @app.get("/napcat.png")
+        def napcat_icon():
+            return send_from_directory(self.static_dir, "napcat.png")
 
         # 连接引导（计划书 §3.1）：组件下载/写配置/托管 + 独立页面 /guide
         # 单独模块，避免把引导塞进两端必须字节一致的共享面板资产
@@ -309,6 +319,12 @@ class ManagerWebPanel:
         def shared_panel_css():
             return send_from_directory(self.static_dir, "panel.css")
 
+        # NapCat 官方图标（侧栏常驻入口 + 账号弹窗的连接方式选择卡用）：
+        # 取自官方文档站 favicon（https://napneko.github.io/favicon.ico）。
+        @app.get("/napcat.png")
+        def napcat_icon():
+            return send_from_directory(self.static_dir, "napcat.png")
+
         # ---------- 账号 ----------
         # 连接引导（计划书 §3.1）：组件下载/写配置/托管 + 独立页面 /guide
         # 单独模块，避免把引导塞进两端必须字节一致的共享面板资产
@@ -412,6 +428,65 @@ class ManagerWebPanel:
                 cfg.access_token = str(b["access_token"])
             mgr.save_config(cfg)
             return _ok({"account_id": aid})
+
+        # 面板的「添加/编辑/删除/启停账号」按钮打的是 /api/app/account-*。
+        # 桌面 file:// 模式下这几条走 RPC（launch.py 注册），可面板**也能用浏览器打开**
+        # （端口模式 / 多账号面板）：那时只有 HTTP，不在这里补路由就 404「接口不存在」——
+        # 用户报的"点保存没反应"就是这个。
+        def _acct_act_http(action: str):
+            d = request.get_json(force=True, silent=True) or {}
+            aid = str(d.get("account_id") or "").strip()
+            if not aid:
+                return _err("缺少 account_id", 400)
+            try:
+                run_coro_sync(self._loop(), getattr(mgr, action)(aid))
+            except KeyError:
+                return _err("账号未配置", 404)
+            except Exception as e:                  # noqa: BLE001
+                return _err(f"{action} 失败: {e}", 500)
+            return _ok({"account_id": aid, action: True})
+
+        @app.post("/api/app/account-save")
+        def api_app_account_save():
+            d = request.get_json(force=True, silent=True) or {}
+            aid = str(d.get("account_id") or "").strip()
+            if not aid:
+                return _err("缺少 account_id", 400)
+            b = d.get("backend") or {}
+            old = mgr.get_config(aid)
+            mgr.save_config(AccountConfig(
+                account_id=aid,
+                display_name=str(d.get("display_name") or (old.display_name if old else aid)),
+                backend_name=str(b.get("name") or (old.backend_name if old else "onebot")),
+                ws_url=str(b.get("ws_url") or (old.ws_url if old else "ws://127.0.0.1:3001")),
+                http_url=str(b.get("http_url") or (old.http_url if old else "http://127.0.0.1:3000")),
+                access_token=str(b.get("access_token") if "access_token" in b
+                                 else (old.access_token if old else "")),
+            ))
+            return _ok({"account_id": aid, "saved": True, "created": old is None})
+
+        @app.post("/api/app/account-delete")
+        def api_app_account_delete():
+            d = request.get_json(force=True, silent=True) or {}
+            aid = str(d.get("account_id") or "").strip()
+            if not aid:
+                return _err("缺少 account_id", 400)
+            fn = getattr(mgr, "delete", None) or getattr(mgr, "remove", None)
+            if fn is None:
+                return _err("当前管理器不支持删除账号", 501)
+            try:
+                run_coro_sync(self._loop(), fn(aid))
+            except KeyError:
+                return _err("账号未配置", 404)
+            return _ok({"account_id": aid, "deleted": True})
+
+        @app.post("/api/app/account-start")
+        def api_app_account_start():
+            return _acct_act_http("start")
+
+        @app.post("/api/app/account-stop")
+        def api_app_account_stop():
+            return _acct_act_http("stop")
 
         @app.get("/api/accounts/<aid>/check")
         def api_check_account(aid: str):
@@ -573,7 +648,17 @@ class ManagerWebPanel:
                     **_acct_status(aid),
                 }
             if page == "accounts":
-                ctx["accounts"] = mgr.scan()
+                # 账号行要带上连接信息：编辑弹窗靠这些 data-* 预填，
+                # 缺了就退回默认值 —— 用户只是改个显示名，ws/token 就被默认值覆盖了。
+                # 只喂页面 ctx（/api/accounts 仍走 mgr.scan()，不把 token 撒到接口上）。
+                rows = []
+                for row in mgr.scan():
+                    c = mgr.get_config(row.get("account_id"))
+                    if c is not None:
+                        row = dict(row, ws_url=c.ws_url, http_url=c.http_url,
+                                   access_token=c.access_token)
+                    rows.append(row)
+                ctx["accounts"] = rows
                 edit = (request.args.get("edit") or "").strip()
                 ecfg = mgr.get_config(edit) if edit else None
                 if ecfg is not None:
@@ -604,19 +689,41 @@ class ManagerWebPanel:
                         # 操作栏标题用人类可读名（`list_plugins()` 里是 name_cn）
                         ctx["plugin_name"] = (it.get("display") or it.get("name_cn")
                                               or pkey)
-            if page == "settings-runtime":
-                ctx["runtime"] = self._runtime_payload()
-            if page == "settings-page":
-                st = self.app_state
+            if page == "napcat":
+                # NapCat 管理页首屏要显示装没装/跑没跑（刷新按钮走 /api/guide/status）
                 try:
-                    pg_port = int((st.web_config() or {}).get("port") or 34567) if st else 34567
-                except (TypeError, ValueError):
-                    pg_port = 34567
-                pg_mode = "window"
-                if st is not None and st.transport_mode() not in ("webview", "auto"):
-                    pg_mode = "port"
-                ctx["page"] = {"mode": pg_mode, "port": pg_port}
-            if page == "settings-auth":
+                    from astercore import components as _comp
+                    from astercore.paths import app_base_dir as _abd
+                    ctx["components"] = {"napcat": _comp.host_status(
+                        _comp.get_component("napcat"), _abd())}
+                except Exception:                # noqa: BLE001 组件层坏了不该整页 500
+                    ctx["components"] = {}
+            # 「设置」是合并页（ui_pages._settings_all = 运行方式 + 安全设置 +
+            # 页面与端口）。三个分页各自要的 ctx 必须同样喂给它，否则合并页
+            # 只剩各段自己的**兜底默认值**：后端模式显示"当前没有可选项"、
+            # 鉴权方式退回"不鉴权"、端口退回 34567 —— 用户点保存就把这些默认值
+            # 写回配置（等于静默关掉鉴权 / 改错端口）。分页正常、合并页不正常，
+            # 是最容易漏掉的一种"只有一处接线漏了"的 bug。
+            if page in ("settings-runtime", "settings"):
+                ctx["runtime"] = self._runtime_payload()
+            if page in ("settings-page", "settings"):
+                st = self.app_state
+                # 端口只回填"用户显式设过的值"；没设过就留空，默认值只当灰色占位。
+                # 以前拿 web_config()（含内部默认 18750）当已填值显示，用户分不清
+                # 那是自己设的还是默认的（用户要求：此处默认为空、灰色显示默认端口）。
+                pg = {"mode": "window", "port": "", "default_port": _ui.DEFAULT_PAGE_PORT}
+                if st is not None:
+                    try:
+                        cfg = st.page_config()
+                    except Exception:            # noqa: BLE001 老配置缺字段也不该整页 500
+                        cfg = {}
+                    pg["mode"] = "port" if cfg.get("mode") == "port" else "window"
+                    raw = st.data.get("page") if isinstance(st.data.get("page"), dict) else {}
+                    web = st.data.get("web") if isinstance(st.data.get("web"), dict) else {}
+                    if (raw or {}).get("port") or (web or {}).get("port"):
+                        pg["port"] = cfg.get("port") or ""
+                ctx["page"] = pg
+            if page in ("settings-auth", "settings"):
                 authed = self.auth.mode == "none" or bool(session.get("ac_auth"))
                 ctx["auth"] = {"authed": authed, "mode": self.auth.mode,
                                "config": self.auth.public()}
@@ -781,6 +888,14 @@ class ManagerWebPanel:
             if auth.mode != "none" and not session.get("ac_auth"):
                 return _err("需要先登录", 401)
             d = request.get_json(force=True, silent=True) or {}
+            # 开启密码/令牌鉴权前必须先有对应凭证，否则保存完就再也进不来了
+            # （面板改成"改完即存"后，误点一下就能把自己锁在外面，所以这里硬拦）
+            want = str(d.get("mode") or auth.mode)
+            if want == "password" and not (str(d.get("password") or "")
+                                           or auth.data.get("password_hash")):
+                return _err("要启用密码鉴权，请先填一个密码")
+            if want == "token" and not auth.data.get("token"):
+                return _err("要启用令牌鉴权，请先点「重新生成令牌」")
             if "mode" in d:
                 auth.set_mode(str(d["mode"]))
             if d.get("password"):
@@ -788,6 +903,11 @@ class ManagerWebPanel:
             if d.get("rotate_token"):
                 tok = auth.rotate_token()
                 return _ok({"token": tok, **auth.public()})
+            # 刚开启鉴权：当前这个会话本来就能改配置，顺手标记为已登录。
+            # 否则面板改成"改完即存"后，勾一下密码鉴权，紧接着的下一次
+            # /api/* 就 401 —— 用户会以为"存不上"（实际是被自己刚设的闸门挡住）。
+            if auth.mode != "none":
+                session["ac_auth"] = True
             return _ok(auth.public())
 
         # 前置检查：密码/token 模式下 API 需要凭证

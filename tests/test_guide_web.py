@@ -37,7 +37,7 @@ class GuideRoutesTest(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.base = Path(cls._tmp.name)
         app = Flask(__name__)
-        add_guide_routes(app, base_dir=lambda: cls.base)
+        cls.api = add_guide_routes(app, base_dir=lambda: cls.base) or {}
         cls.client = app.test_client()
 
     @classmethod
@@ -59,6 +59,12 @@ class GuideRoutesTest(unittest.TestCase):
         self.assertTrue(j["data"]["supported"])
         self.assertEqual(set(j["data"]["components"]), {"napcat", "lagrange"})
         self.assertEqual(j["data"]["base_dir"], str(self.base))
+        self.assertIn("jobs", j["data"], "安装任务要跟着状态一起回（顶栏进度读它）")
+
+    def test_add_guide_routes_exposes_reusable_api(self):
+        """桌面 file:// 模式的 RPC 复用这同一份实现（那边自己再写一遍就跑偏了）"""
+        for key in ("status", "install", "create_account"):
+            self.assertIn(key, GuideRoutesTest.api)
 
     def test_unknown_key_is_400(self):
         r = self.client.post("/api/guide/config", json={"key": "nope"})
@@ -114,6 +120,24 @@ class GuideRoutesTest(unittest.TestCase):
             time.sleep(0.1)
         self.assertEqual(step, "done", f"安装没成功: {step}")
         self.assertTrue(C.find_executable(C.get_component("lagrange"), self.base))
+
+    def test_install_job_reports_percent(self):
+        """顶栏「下载中 x%」读 percent，「解压中」读 step —— 任务快照必须带上"""
+        z = _mkzip(self.base / "lag2.zip", {"Lagrange.OneBot.exe": b"MZ"}, prefix="Lagrange/")
+        res = GuideRoutesTest.api["install"]({"key": "lagrange", "url": Path(z).as_uri()})
+        self.assertTrue(res["started"], res)
+        self.assertIn("percent", res["job"], "任务快照要带 percent")
+        self.assertIn("step", res["job"])
+        deadline = time.time() + 8
+        job = dict(res["job"])
+        while time.time() < deadline:
+            job = GuideRoutesTest.api["status"]()["jobs"]["lagrange"]
+            if job.get("step") in ("done", "failed"):
+                break
+            time.sleep(0.05)
+        self.assertEqual(job["step"], "done", job)
+        self.assertEqual(job["percent"], 100)
+        self.assertFalse(job["running"])
 
     # ---------- 二维码 / 日志 ----------
     def test_qr_none_then_image(self):

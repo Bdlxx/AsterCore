@@ -528,22 +528,30 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
 
     # 面板内「连接引导」页用到的端点：file:// 模式下 fetch 会被 Transport 转成 hub 方法
     try:
-        import threading as _threading
-
         from astercore import components as _C
         from astercore.paths import app_base_dir as _base
+        from astercore.web import guide as _guide
 
         def _g_status(p=None):
+            """与 HTTP 的 /api/guide/status 同形：顶栏靠 jobs 显示"下载中 x% / 解压中"""
+            api = getattr(panel, "guide_api", None) or {}
+            fn = api.get("status")
+            if fn is not None:
+                return fn()
             base = _base()
-            return {"base_dir": str(base),
-                    "components": {k: _C.host_status(c, base) for k, c in _C.COMPONENTS.items()}}
+            return {"supported": True, "base_dir": str(base),
+                    "components": {k: _C.host_status(c, base) for k, c in _C.COMPONENTS.items()},
+                    "jobs": _guide.jobs_snapshot()}
 
         def _g_install(p=None):
-            key = str((p or {}).get("key") or "")
-            comp = _C.get_component(key)
-            base = _base()
-            _threading.Thread(target=lambda: _C.provision(comp, base), daemon=True).start()
-            return {"started": True}
+            """走 guide 那份任务化安装（有进度、能区分下载/解压），不再自己裸起线程"""
+            api = getattr(panel, "guide_api", None) or {}
+            fn = api.get("install")
+            if fn is not None:
+                return fn(p)
+            p = p or {}
+            return _guide.start_install(str(p.get("key") or ""), _base(),
+                                        url=p.get("url"), zip_path=p.get("zip"))
 
         def _g_config(p=None):
             p = p or {}

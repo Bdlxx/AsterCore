@@ -22,7 +22,11 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 log = logging.getLogger("e2e-demo")
 
 FAKE_SCRIPT = ROOT / "tools/fake_onebot.py"
-C_LIB = ROOT / "plugin-sdk/examples/c-sample/libnap_hello.so"
+C_SRC = ROOT / "plugin-sdk/examples/c-sample/nap_hello.c"
+# 示例产物按平台取名：Windows 是 nap_hello.dll，Linux/macOS 是 libnap_hello.so。
+# 拿 Linux 的 .so 当 Windows 产物用，会走到系统加载器弹"损坏的映像"对话框。
+C_LIB = ROOT / "plugin-sdk/examples/c-sample" / (
+    "nap_hello.dll" if sys.platform == "win32" else "libnap_hello.so")
 DEMO_PY = ROOT / "src/astercore/plugins/demo_hello.py"
 
 
@@ -31,11 +35,26 @@ def _ensure_c_lib() -> bool:
         return True
     print("[e2e] 编译 C 示例插件…")
     import subprocess
-    r = subprocess.run(
-        ["cc", "-shared", "-fPIC", "-O2", "-I", str(ROOT / "plugin-sdk"),
-         str(ROOT / "plugin-sdk/examples/c-sample/nap_hello.c"),
-         "-o", str(C_LIB)], capture_output=True, text=True)
-    return r.returncode == 0
+    if sys.platform == "win32":
+        # Windows 没有 cc：先 cl（VS 开发者命令行），再 gcc（MinGW）。
+        candidates = [
+            ["cl", "/nologo", "/LD", "/I", str(ROOT / "plugin-sdk"),
+             str(C_SRC), f"/Fe:{C_LIB}"],
+            ["gcc", "-shared", "-O2", "-I", str(ROOT / "plugin-sdk"),
+             str(C_SRC), "-o", str(C_LIB)],
+        ]
+    else:
+        candidates = [
+            ["cc", "-shared", "-fPIC", "-O2", "-I", str(ROOT / "plugin-sdk"),
+             str(C_SRC), "-o", str(C_LIB)],
+        ]
+    for cmd in candidates:
+        if shutil.which(cmd[0]) is None:
+            continue
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0 and C_LIB.exists():
+            return True
+    return False
 
 
 async def _run(serve_port: int | None) -> int:
@@ -43,9 +62,13 @@ async def _run(serve_port: int | None) -> int:
     from astercore.core.backend import BackendConfig, get_registry
     from astercore.core.runtime import AccountRuntime
 
-    if not _ensure_c_lib():
-        print("[e2e] ✗ C 示例编译失败（需要 gcc）")
-        return 1
+    has_c = _ensure_c_lib()
+    if not has_c:
+        # 原生插件只是本演示的一条腿（Python 插件腿照跑），别因此中断整轮验证。
+        # Windows 上没装编译器时提示清楚，免得看的人以为是框架坏了。
+        print("[e2e] ⚠ 跳过原生插件腿：C 示例未编译"
+              + ("（Windows 需 cl.exe / VS 开发者命令行，或 gcc）"
+                 if sys.platform == "win32" else "（需要 cc）"))
 
     # 1) 起 fake onebot（推送"你好"群消息）
     import subprocess
@@ -55,12 +78,13 @@ async def _run(serve_port: int | None) -> int:
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     await asyncio.sleep(1.5)
 
-    # 2) 组装插件目录：demo_hello.py + libnap_hello.so
+    # 2) 组装插件目录：demo_hello.py + 原生库（有才拷）
     tmp = Path(tempfile.mkdtemp(prefix="astere2e-"))
     pdir = tmp / "plugins"
     pdir.mkdir(parents=True)
     shutil.copy(DEMO_PY, pdir / "demo_hello.py")
-    shutil.copy(C_LIB, pdir / "libnap_hello.so")
+    if has_c:
+        shutil.copy(C_LIB, pdir / C_LIB.name)
 
     rt = AccountRuntime(
         account_id="740979632",

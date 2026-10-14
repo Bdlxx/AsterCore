@@ -9,7 +9,10 @@ from astercore.core.models import Event, seg_text
 from astercore.nativehost import HostCrashError, NativeHostProxy
 
 LIB = Path(__file__).resolve().parent.parent / "plugin-sdk/examples/c-sample"
-for name in ("libnap_hello.so", "nap_hello.dll"):
+# 只认本平台的产物名（Windows=.dll，其余=.so），不做跨平台退回：
+# host 子进程里的 ctypes 拿到 Linux .so 时，Windows 加载器会弹
+# "损坏的映像"模态框（0xc000012f）而不是抛异常。
+for name in ("nap_hello.dll",) if sys.platform == "win32" else ("libnap_hello.so",):
     if (LIB / name).exists():
         LIB_PATH = LIB / name
         break

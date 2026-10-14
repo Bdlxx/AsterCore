@@ -14,6 +14,10 @@ import time
 from astercore.web import panel_pages as pp      # 两端共用的页面/小件（同一份字节）
 from astercore.web.panel_pages import esc, fmt_uptime, card, empty_state, status_tag
 
+# 页面模式端口默认值：与 setup.py DEFAULT_PORT 同值（留空时后端就用这个）。
+# 放在这里是为了让"面板占位文案"和"保存时的兜底"用同一个数。
+DEFAULT_PAGE_PORT = 34567
+
 
 # ---------------------------------------------------------------- 概览
 def _dashboard(ctx):
@@ -127,32 +131,64 @@ def _account_row(a):
           <button class="btn btn-default mini" data-act="stop" data-key="{aid}">停止</button>
           <button class="btn btn-default mini" data-act="acct-edit" data-key="{aid}"
             data-ws="{esc(a.get('ws_url') or '')}" data-http="{esc(a.get('http_url') or '')}"
-            data-token="{esc(a.get('access_token') or '')}" data-name="{name}">编辑</button>
+            data-token="{esc(a.get('access_token') or '')}" data-name="{name}"
+            data-backend="{esc(a.get('backend_name') or 'onebot')}">编辑</button>
           <button class="btn btn-default mini" data-act="del-account" data-key="{aid}">删除</button>
         </div>
       </div>"""
 
 
 def _acct_dialog() -> str:
-    """添加/编辑账号的**弹窗**（替代原来页面底部的内嵌表单；字段与 data-acct 约定不变）"""
+    """添加/编辑账号的**弹窗**（替代原来页面底部的内嵌表单；字段与 data-acct 约定不变）
+
+    用户要求：登录模式（NapCat / 内置协议 / 演示）**在这里选**，设置页不再保留。
+    并且**先选连接方式**（NapCat / 内置协议），选完才显示对应的填写项 ——
+    两种方式的必填项完全不同，一股脑列出来只会让人填错。
+
+    连接信息**不给用户填**：NapCat 那边由软件写配置文件（端口自动、令牌随机生成），
+    账号跟着这份配置走，两边天然一致。只有自建了外部 NapCat 的人才需要手动，
+    所以那三个框收进「手动填写」里。
+    """
     return """
     <div class="ui-modal" id="acctDlg" role="dialog" aria-modal="true" hidden>
       <div class="ui-modal-backdrop" data-act="acct-dlg-cancel"></div>
       <div class="ui-modal-box">
         <h2 class="ui-modal-title" id="acctDlgTitle">添加账号</h2>
-        <div class="cf-form">
+        <input type="hidden" id="ac_mode" data-acct="backend_name" value="onebot">
+        <div id="acctStep1">
+          <div class="cf-help" style="margin-bottom:8px">先选这个账号怎么连 QQ：</div>
+          <button type="button" class="acct-pick" onclick="PANEL.hooks.acctPick('onebot')">
+            <img class="acct-pick-ico" src="napcat.png" alt="">
+            <span class="acct-pick-body"><b>NapCat</b><span class="cf-help">走官方 QQ
+              客户端通道，风控最低。需要先下载并启动 NapCat（侧栏「NapCat」）。</span></span>
+          </button>
+          <button type="button" class="acct-pick" onclick="PANEL.hooks.acctPick('lagrange')">
+            <span class="acct-pick-ico">🧩</span>
+            <span class="acct-pick-body"><b>内置协议（实验）</b><span class="cf-help">软件自带，
+              免安装、不用填连接信息；非官方协议，建议用小号。</span></span>
+          </button>
+        </div>
+        <div class="cf-form" id="acctFields" style="display:none">
           <div class="cf-field"><label class="cf-label" for="ac_id">账号 ID（QQ 号）</label>
             <input type="text" id="ac_id" placeholder="例如 10001" data-acct="account_id"></div>
           <div class="cf-field"><label class="cf-label" for="ac_name">显示名</label>
             <input type="text" id="ac_name" placeholder="例如 依星" data-acct="display_name"></div>
-          <div class="cf-field"><label class="cf-label" for="ac_ws">WebSocket 地址</label>
-            <input type="text" id="ac_ws" value="ws://127.0.0.1:3001" data-acct="ws_url">
-            <div class="cf-help">NapCat 的 OneBot WebSocket，例如 ws://127.0.0.1:3001</div></div>
-          <div class="cf-field"><label class="cf-label" for="ac_http">HTTP 地址</label>
-            <input type="text" id="ac_http" value="http://127.0.0.1:3000" data-acct="http_url"></div>
-          <div class="cf-field"><label class="cf-label" for="ac_token">Access Token</label>
-            <input type="password" id="ac_token" autocomplete="new-password" data-acct="access_token">
-            <div class="cf-help">NapCat 里配置的 token，没设就留空</div></div>
+          <div id="acctModeHelp" class="cf-help" style="margin:4px 0 2px"></div>
+          <div id="acctConnFields">
+            <div id="acctNcHint" class="cf-help" style="margin:2px 0 0"></div>
+            <details id="acctManual" style="margin-top:10px">
+              <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary)">
+                手动填写连接信息（只有自建的外部 NapCat 才需要）</summary>
+              <div class="cf-field"><label class="cf-label" for="ac_ws">WebSocket 地址</label>
+                <input type="text" id="ac_ws" placeholder="ws://127.0.0.1:3001" data-acct="ws_url">
+                <div class="cf-help">留空即由软件自动生成端口并写进 NapCat 配置</div></div>
+              <div class="cf-field"><label class="cf-label" for="ac_http">HTTP 地址</label>
+                <input type="text" id="ac_http" placeholder="http://127.0.0.1:3000" data-acct="http_url"></div>
+              <div class="cf-field"><label class="cf-label" for="ac_token">Access Token</label>
+                <input type="password" id="ac_token" autocomplete="new-password" data-acct="access_token">
+                <div class="cf-help">留空即随机生成一个令牌（推荐）</div></div>
+            </details>
+          </div>
           <div id="acMsg" style="font-size:12px;color:var(--text-secondary);margin-top:8px"></div>
         </div>
         <div class="ui-modal-actions">
@@ -160,7 +196,19 @@ def _acct_dialog() -> str:
           <button class="btn btn-primary" data-act="save-account" id="acctDlgSave">保存</button>
         </div>
       </div>
-    </div>"""
+    </div>
+    <style>
+      /* 连接方式选择卡（桌面专属页面标记，不动双端共用的 panel.css） */
+      #acctDlg .acct-pick{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:start;
+        border:1px solid var(--border-color);border-radius:10px;background:transparent;padding:10px 12px;
+        margin:8px 0;cursor:pointer;font-family:inherit;font-size:13px;color:var(--text-regular);
+        transition:border-color .16s var(--ease,ease),background-color .16s var(--ease,ease)}
+      #acctDlg .acct-pick:hover{border-color:var(--color-primary);background:var(--bg-hover);
+        color:var(--text-primary)}
+      #acctDlg .acct-pick-ico{width:32px;height:32px;flex:0 0 auto;display:flex;align-items:center;
+        justify-content:center;font-size:24px}
+      #acctDlg .acct-pick-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+    </style>"""
 
 
 def _accounts(ctx):
@@ -203,50 +251,69 @@ def _settings_runtime(ctx):
             <input type="hidden" id="rt_mode" data-rt="backend_mode" value="{esc(cur)}">
             <div id="rtMsg" style="font-size:12px;color:var(--text-secondary);margin-top:6px"></div>
           </div>""")
-        + card('📋 当前状态', pp.info_table([
-            ('向导是否完成', '是' if st.get('wizard_completed') or st.get('inited') else '否'),
-            ('风险已确认', '是' if st.get('risk_acknowledged') else '否'),
-            ('需要重跑向导', '是' if st.get('needs_wizard') else '否'),
-        ]))
+        + _runtime_status_cards(ctx)
+    )
+
+
+def _runtime_status_cards(ctx) -> str:
+    """当前状态 + 操作（原「运行方式」页的后两张卡）。
+
+    用户要求：登录模式改到**账号弹窗**里选，设置页不再保留后端模式单选 ——
+    所以合并页只留这两张状态卡，模式单选仍留在独立的 /settings-runtime 页。
+    """
+    st = (ctx.get('runtime') or {}).get('state') or {}
+    return (card('📋 当前状态', pp.info_table([
+        ('向导是否完成', '是' if st.get('wizard_completed') or st.get('inited') else '否'),
+        ('风险已确认', '是' if st.get('risk_acknowledged') else '否'),
+        ('需要重跑向导', '是' if st.get('needs_wizard') else '否'),
+    ]))
         + card('⚙️ 操作', """
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn-default" data-act="reset-wizard">🔄 重跑启动向导</button>
           </div>
           <div class="cf-help" style="margin-top:8px">
             「重跑启动向导」会把引导状态清空，下次启动重新选使用方式（不影响已建账号）。
-          </div>""")
-    )
+          </div>"""))
 
 
 def _settings_auth(ctx):
+    """安全设置（用户要求：移除令牌鉴权，只留 不鉴权 / 密码）。"""
     a = ctx.get('auth') or {}
     cfg = a.get('config') or {}
     mode = cfg.get('mode') or a.get('mode') or 'none'
-    opts = ''.join(f'<option value="{m}"{" selected" if m == mode else ""}>{lbl}</option>'
-                   for m, lbl in (('none', '不鉴权（仅本机）'), ('password', '密码'), ('token', '令牌')))
-    tok = esc(cfg.get('token') or '')
+    choices = [('none', '不鉴权（仅本机）'), ('password', '密码')]
+    legacy = ''
+    if mode == 'token':
+        # 老配置可能还停在"令牌"上：保留一个**禁用**项把真实状态显示出来，
+        # 否则下拉框会显示"不鉴权"而实际是令牌（那等于悄悄把鉴权关掉）。
+        choices.append(('token', '令牌（已下线）'))
+        legacy = ('<div class="cf-help" style="color:var(--color-danger)">'
+                  '当前用的是「令牌鉴权」，该方式已下线 —— 请选「密码」并设置密码后保存。</div>')
+    opts = ''.join(
+        f'<option value="{m}"{" selected" if m == mode else ""}'
+        f'{" disabled" if m == "token" else ""}>{lbl}</option>' for m, lbl in choices)
     return card('🔒 安全设置', f"""
       <div class="cf-form">
         <div class="cf-field"><label class="cf-label" for="au_mode">鉴权方式</label>
           <select id="au_mode" data-auth="mode">{opts}</select>
-          <div class="cf-help">对外开 Web 访问时建议至少用密码；进程内（桌面窗口）调用不受影响</div></div>
+          <div class="cf-help">对外开 Web 访问时建议至少用密码；进程内（桌面窗口）调用不受影响</div>{legacy}</div>
         <div class="cf-field"><label class="cf-label" for="au_pwd">设置/修改密码</label>
           <input type="password" id="au_pwd" autocomplete="new-password" placeholder="留空表示不修改" data-auth="password"></div>
-        {('<div class="cf-field"><label class="cf-label">当前令牌</label>'
-          '<input type="text" value="' + tok + '" readonly></div>') if tok else ''}
-        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
-          <button class="btn btn-default" data-act="rotate-token">🎲 重新生成令牌</button>
-        </div>
         <div id="auMsg" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
       </div>""")
 
 
 
 def _settings_page(ctx):
-    """页面与端口（规格 §三 卡片二）。保存走已有的 /api/setup/page（校验/落盘都在那）。"""
+    """页面与端口（规格 §三 卡片二）。保存走已有的 /api/setup/page（校验/落盘都在那）。
+
+    端口框**用户没设过就留空**，默认值只做灰色占位：以前把内部默认值当"已填值"
+    显示出来，用户分不清那是自己设的还是默认的（用户要求）。
+    """
     pg = ctx.get('page') or {}
     mode = pg.get('mode') or 'window'
-    port = pg.get('port') or 34567
+    port = pg.get('port') or ''                     # 空 = 没显式设过
+    dflt = pg.get('default_port') or DEFAULT_PAGE_PORT
     return card('🖥️ 页面模式与端口', f"""
       <div class="cf-form">
         <div class="cf-field"><label class="cf-label">页面模式</label>
@@ -256,8 +323,9 @@ def _settings_page(ctx):
           </select>
           <div class="cf-help">窗口模式不需要任何端口；端口模式会在本机开一个 Web 端口供浏览器访问</div></div>
         <div class="cf-field"><label class="cf-label" for="sp_port">端口</label>
-          <input type="number" id="sp_port" min="1" max="65535" value="{port}">
-          <div class="cf-help">范围 1-65535，默认 34567（避开常用端口）。改动重启程序后生效</div></div>
+          <input type="number" id="sp_port" min="1" max="65535" value="{esc(port)}"
+                 placeholder="{esc(dflt)}" autocomplete="off">
+          <div class="cf-help">范围 1-65535，默认 {esc(dflt)}。留空即用默认，改动重启程序后生效</div></div>
         <div id="spMsg" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
       </div>""")
 
@@ -327,38 +395,29 @@ def _guide_page(ctx):
     用户要求：**页面主视线只展示 NapCat 三步安装引导**；其余（停止组件/看日志/刷新状态、
     一键建账号、内置协议说明）收进「更多操作」，需要时再展开。
     """
-    _base = (ctx.get('guide') or {}).get('base_dir') or ''
+    # 组件目录**必须问 components 模块**（它按运行基目录解析），不能自己拼字符串 ——
+    # 以前兜底里写死 `\components\napcat`，换个安装目录/换个组件就对不上了（用户要求）。
     try:
         from astercore import components as _C
         from astercore.paths import app_base_dir as _abd
-        _nap = _C.component_dir(_abd(), 'napcat')
+        comp_dir = esc(str(_C.component_dir(_abd(), 'napcat')))
     except Exception:                                  # noqa: BLE001
-        _nap = None
-    comp_dir = esc(str(_nap) if _nap else (str(_base) + r'\components\napcat'))
+        comp_dir = '（组件目录未确定，先看「更多操作 → 看日志」里的路径）'
     return card('🚀 连接引导', f"""
       <div class="cf-help" style="margin-bottom:10px">
-        推荐路线：<b>① 去官网下载并安装 NapCat</b>（走官方 QQ 通道，风控最低）
-        → <b>② 写配置</b> → <b>③ 启动扫码</b>，然后把连接信息填到「账号」页（ws 地址 + 令牌）。
-        <div style="margin-top:4px">第①步只做引导（不在应用里下载）：点击会用**浏览器**打开官方下载页
-        <a href="https://github.com/NapNeko/NapCatQQ/releases/latest" target="_blank" rel="noreferrer">https://github.com/NapNeko/NapCatQQ/releases/latest</a>，
-        装完回来点第②步即可。</div>
+        三步走：<b>① 一键下载并解压 NapCat</b>（官方 Windows 版，走官方 QQ 通道，风控最低）
+        → <b>② 写配置</b> → <b>③ 启动扫码</b>。扫码登录后，本页会问你要不要直接用
+        刚登录的账号建号，点一下就能用。
+        <div style="margin-top:4px">下载进度看顶部栏（下载中 x% / 解压中），
+        官方压缩包会自动解压到组件目录：<code id="gdDir" style="user-select:all">{comp_dir}</code></div>
       </div>
       <div class="cf-form">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-          <button class="btn" data-act="gd-open" data-url="https://github.com/NapNeko/NapCatQQ/releases/latest">① 去官网下载 NapCat</button>
+          <button class="btn btn-primary" data-act="gd-install" data-key="napcat">① 下载并解压 NapCat</button>
           <button class="btn" data-act="gd-config" data-key="napcat">② 写 NapCat 配置（自动端口/令牌）</button>
           <button class="btn" data-act="gd-host" data-key="napcat">③ 启动 NapCat 并取二维码</button>
         </div>
-        <div class="cf-help" style="margin-top:10px;line-height:1.9">
-          <b>第①步要装到哪</b>（下面就是本软件认的组件目录，装别的目录它找不到）：<br>
-          <code style="user-select:all">{comp_dir}</code><br>
-          <b>一步步来</b>：<br>
-          1. 点上面「① 去官网下载 NapCat」，浏览器会打开官方下载页；<br>
-          2. 下载 Windows 版压缩包（<code>NapCat.Shell.Windows*.zip</code>）；<br>
-          3. 把压缩包**解压**，将其中的内容放进上面那个目录（没有就自己建）；
-          目录里应能看到 <code>NapCatWinBootMain.exe</code> 或 <code>napcat*.exe</code>；<br>
-          4. 回到本页点「② 写 NapCat 配置」→「③ 启动 NapCat 并取二维码」。
-        </div>
+        <div id="gdJob" class="cf-help" style="margin-top:8px"></div>
         <div id="gdOut" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
         <div id="gdCfg" style="margin-top:10px;display:none"></div>
         <div id="gdQR" style="margin-top:10px"></div>
@@ -381,10 +440,66 @@ def _guide_page(ctx):
           <div class="cf-help" style="margin-top:12px">组件目录：{comp_dir}</div>
           <div class="cf-help" style="margin-top:6px">
             <b>内置协议（Lagrange）由软件自带</b>，不在这里下载：装好本软件即可直接用
-            （面板 → 设置 → 运行方式 → 内部协议）。
+            （在「账号」页点「添加账号」，第一步选「内置协议」即可）。
           </div>
         </details>
       </div>""")
+
+
+# ---------------------------------------------------------------- NapCat 管理（侧栏常驻入口）
+def _napcat_state_html(comp: dict) -> str:
+    """NapCat 状态片段（页面首屏由后端渲染，之后每次刷新都用它替换）"""
+    comp = comp or {}
+    installed = bool(comp.get("installed"))
+    running = bool(comp.get("running"))
+    install_tag = ('<span class="el-tag success"><span class="status-dot green"></span> 已安装</span>'
+                   if installed else
+                   '<span class="el-tag warning"><span class="status-dot yellow"></span> 未安装</span>')
+    run_tag = ('<span class="el-tag success"><span class="status-dot green"></span> 运行中</span>'
+               if running else
+               '<span class="el-tag muted"><span class="status-dot red"></span> 未运行</span>')
+    exe = esc(comp.get("executable") or "—")
+    pid = comp.get("pid")
+    return (f'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+            f'{install_tag}{run_tag}'
+            + (f'<span class="el-tag muted">PID {esc(pid)}</span>' if pid else '')
+            + '</div>'
+            f'<table class="el-table" style="margin-top:10px">'
+            f'<tr><th width="150">项目</th><th>值</th></tr>'
+            f'<tr><td>可执行文件</td><td style="word-break:break-all">{exe}</td></tr>'
+            f'<tr><td>组件目录</td><td style="word-break:break-all">{esc(comp.get("dir") or "—")}</td></tr>'
+            f'</table>')
+
+
+def _napcat_page(ctx):
+    """NapCat 管理页（侧栏「概览」下面的常驻图标进来）：
+
+    装/起/停/扫码/日志都在这，等价于把「连接引导」里 NapCat 那三步单独拎出来，
+    因为它是最常用的日常操作（重装、重启、重新扫码）。
+    """
+    comp = ((ctx.get("components") or {}).get("napcat") or {})
+    installed = bool(comp.get("installed"))
+    return (card('🐱 NapCat 管理', f"""
+      <div class="cf-help" style="margin-bottom:8px">
+        官方 Windows 版（NapCat.Shell）下载后自动解压到组件目录，不需要手动解压。
+        下载进度显示在顶部栏；装好后再写配置、启动扫码。
+      </div>
+      <div id="ncStatus">{_napcat_state_html(comp)}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+        <button class="btn {'btn-primary' if not installed else 'btn-default'}"
+                data-act="gd-install" data-key="napcat">下载并解压</button>
+        <button class="btn btn-primary" data-act="gd-host" data-key="napcat">启动并取二维码</button>
+        <button class="btn btn-default" data-act="gd-stop" data-key="napcat">停止</button>
+        <button class="btn btn-default" data-act="gd-config" data-key="napcat">写配置（自动端口/令牌）</button>
+        <button class="btn btn-default" data-act="gd-log" data-key="napcat">看日志</button>
+        <button class="btn btn-default" data-act="gd-refresh" data-key="napcat">刷新状态</button>
+      </div>
+      <div id="gdJob" class="cf-help" style="margin-top:8px"></div>
+      <div id="gdOut" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
+      <div id="gdCfg" style="margin-top:10px;display:none"></div>
+      <div id="gdQR" style="margin-top:10px"></div>
+      <pre id="gdLogBox" style="max-height:260px;overflow:auto;font-size:12px;display:none;
+           background:var(--bg-secondary,#f6f7f9);padding:10px;border-radius:8px"></pre>"""))
 
 
 _orig_accounts = _accounts          # 必须指向最新实现（否则改版不生效）
@@ -394,13 +509,14 @@ def _accounts_with_guide(ctx):
     banner = ('<div class="card"><div class="card-body" style="display:flex;gap:12px;align-items:center;'
               'flex-wrap:wrap"><div style="font-size:20px">🚀</div>'
               '<div style="flex:1;min-width:220px">第一次用？先走一遍<b>连接引导</b>：'
-              '下载组件 → 写配置 → 启动扫码，再把连接信息填到下面的表单。</div>'
+          '下载组件 → 写配置 → 启动扫码，再用拿到的连接信息添加账号。</div>'
               '<button class="btn" data-open="guide-page">打开连接引导</button></div></div>')
     return banner + _orig_accounts(ctx)
 
 
 PAGES['accounts'] = (_accounts_with_guide, PAGES['accounts'][1], PAGES['accounts'][2])
 PAGES['guide-page'] = (_guide_page, '连接引导', [])
+PAGES['napcat'] = (_napcat_page, 'NapCat 管理', [])
 
 
 # ---------------------------------------------------------------- 关于与更新（计划书 §369）
@@ -438,11 +554,14 @@ def _about_page(ctx):
 PAGES['about-page'] = (_about_page, '关于与更新', [])
 
 
-def _save_row(kind: str, hint: str = "") -> str:
-    """每块设置自己的保存按钮（三块合到一页后，底部单一「保存」没法区分目标）"""
+def _auto_hint(kind: str) -> str:
+    """每块设置只留一行状态字：改完立即保存，没有「保存」按钮。
+
+    用户要求："本页不保留保存按钮，就像正常软件的设置那样" —— 所以这里不再出按钮，
+    只保留回显（"已保存 / 保存失败"）用的元素，保存动作由前端 change 事件触发。
+    """
     return f"""
       <div style="display:flex;gap:10px;align-items:center;margin:10px 0 4px">
-        <button class="btn btn-primary" data-act="save-{kind}">💾 保存「{hint or kind}」</button>
         <span id="sv{kind}Msg" style="font-size:12px;color:var(--text-secondary)"></span>
       </div>"""
 
@@ -450,16 +569,17 @@ def _save_row(kind: str, hint: str = "") -> str:
 def _settings_all(ctx):
     """设置（合并页）：左侧只留一个「设置」入口，右侧三张卡片各管一块。
 
-    用户要求：把「运行方式 / 安全设置 / 页面与端口」三个分类**做到设置页右侧**，
-    左侧栏不再显示这三个选项。
+    用户要求：把设置分类**做到设置页右侧**，左侧栏不再显示这些选项；
+    并且「登录模式」不在这页（移到账号弹窗里选）。
     """
     return (
         '<div class="cf-help" style="margin-bottom:10px">'
-        '这一页集中三块设置：<b>① 后端模式（单选）</b>、<b>② 安全设置</b>、<b>③ 页面与端口</b>。'
-        '每块下方各有自己的「保存」按钮，改哪块存哪块。</div>'
-        + _settings_runtime(ctx) + _save_row('rt', '后端模式')
-        + _settings_auth(ctx) + _save_row('auth', '安全设置')
-        + _settings_page(ctx) + _save_row('page', '页面与端口')
+        '这一页集中三块设置：<b>① 当前状态</b>、<b>② 安全设置</b>、<b>③ 页面与端口</b>。'
+        '改完立即生效并保存，不需要点保存按钮。'
+        '<br>登录模式（NapCat / 内置协议 / 演示）在「账号」页的添加、编辑弹窗里选。</div>'
+        + _runtime_status_cards(ctx)
+        + _settings_auth(ctx) + _auto_hint('auth')
+        + _settings_page(ctx) + _auto_hint('page')
     )
 
 

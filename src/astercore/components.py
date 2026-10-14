@@ -206,17 +206,51 @@ def _deep_merge(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
     return dst
 
 
+def napcat_work_dir(base_dir: str | Path) -> Path:
+    """NapCat 的**工作目录**（config/ logs/ cache/ plugins/ 都挂在它下面）。
+
+    ⚠ 别想当然用组件目录：官方 Shell 包里 NapCat 本体在 `<组件目录>/napcat/`
+    （`napcat.bat` → `index.js` → `napcat/napcat.mjs`），而 napcat.mjs 里
+    `configPath = <napcat.mjs 所在目录>/config`（除非设了 NAPCAT_WORKDIR）。
+    写到 `<组件目录>/config` 的话 NapCat 根本不读，它会在自己那边另生成一份默认
+    配置 —— 账号里填的端口与令牌就跟它永远对不上（真机核对过包内实现）。
+    """
+    root = component_dir(base_dir, "napcat")
+    if (root / "napcat" / "napcat.mjs").is_file():
+        return root / "napcat"
+    if (root / "napcat.mjs").is_file():
+        return root
+    try:                                    # 包结构变了也认：有界找 napcat.mjs
+        for cand in sorted(root.rglob("napcat.mjs"))[:5]:
+            if cand.is_file():
+                return cand.parent
+    except OSError:
+        pass
+    return root
+
+
 def write_napcat_config(base_dir: str | Path, key_or_qq: str | int, ws_port: int,
                         http_port: int, token: str) -> Path:
-    """写 NapCat 的 OneBot 配置：<组件目录>/config/onebot11_<QQ>.json
+    """写 NapCat 的 OneBot 配置：<工作目录>/config/onebot11_<QQ>.json
 
     老配置（用户手装的 NapCat 目录）里可能还有别的键 → 只改我们负责的
     网络/token 部分（`network.websocketServers[0]` / `httpServers[0]`）。
+
+    还不知道 QQ 时（引导页第②步）写成 **onebot11.json** —— 这是 NapCat 自己认的
+    兜底文件名（包内实现：先找 onebot11_<uin>.json，没有就 load onebot11.json）。
+    写成 onebot11_default.json 的话它永远读不到，用户点了"写配置"看着成功、
+    实际等于没写。
     """
-    root = component_dir(base_dir, "napcat")
-    path = root / "config" / f"onebot11_{key_or_qq}.json"
+    comp = component_dir(base_dir, "napcat")
+    qq = str(key_or_qq or "").strip()
+    name = f"onebot11_{qq}.json" if qq and qq.lower() != "default" else "onebot11.json"
+    path = napcat_work_dir(base_dir) / "config" / name
     cur = read_json(path)
-    networks = cur.setdefault("network", {}) if cur else {}
+    if not cur:
+        # 老版本（写到 <组件目录>/config 那次）留下的文件里可能有用户自己的键，
+        # 一次性读过来当底稿，别白丢。
+        cur = read_json(comp / "config" / name)
+    networks = dict(cur.get("network") or {})
     ws_list = networks.get("websocketServers") or [{}]
     ws_list[0] = _merge_server(ws_list[0], {
         "name": ws_list[0].get("name") or "astercore-ws",
@@ -234,7 +268,10 @@ def write_napcat_config(base_dir: str | Path, key_or_qq: str | int, ws_port: int
     })
     networks["websocketServers"] = ws_list
     networks["httpServers"] = http_list
-    return merge_write_json(path, {"network": networks})
+    cur["network"] = networks
+    # 整份 cur 一起落盘：正常情况目标文件就是 cur 的来源（深合并等价于原地更新），
+    # 而"从老路径搬过来的底稿"必须整体写过去，否则用户那些键会白读一场。
+    return merge_write_json(path, cur)
 
 
 def _merge_server(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
@@ -315,6 +352,19 @@ def download(url: str, dest: str | Path, *, timeout: float = 60.0,
     return p
 
 
+def _notify(stage: Callable[[str], None] | None, name: str) -> None:
+    """阶段回调（download / extract）：面板顶栏要显示"下载中 x% / 解压中"。
+
+    回调是调用方的东西，出错不能拖垮安装本身 —— 一律吞掉。
+    """
+    if not stage:
+        return
+    try:
+        stage(name)
+    except Exception:                       # noqa: BLE001
+        pass
+
+
 def install_from_zip(cmp: Component, base_dir: str | Path, zip_path: str | Path) -> tuple[bool, str]:
     """把（已下载的）组件压缩包解到组件目录；解完必须能找到可执行文件"""
     root = component_dir(base_dir, cmp.key)
@@ -373,8 +423,13 @@ def flatten_single_root(root: Path) -> Path | None:
 
 def provision(cmp: Component, base_dir: str | Path, *, url: str | None = None,
               zip_path: str | Path | None = None,
-              progress: Callable[[int, int], None] | None = None) -> tuple[bool, str]:
-    """安装组件：给 zip_path 就直接解压，否则按 url/镜像下载再解压（都失败则报清原因）"""
+              progress: Callable[[int, int], None] | None = None,
+              stage: Callable[[str], None] | None = None) -> tuple[bool, str]:
+    """安装组件：给 zip_path 就直接解压，否则按 url/镜像下载再解压（都失败则报清原因）
+
+    stage: 阶段回调，"downloading" / "extracting" —— 顶栏进度靠它区分
+    "下载中 x%" 与"解压中"（不然解压那几秒还停在 100%，看着像卡住）。
+    """
     root = component_dir(base_dir, cmp.key)
     if zip_path is None:
         candidates = [url] if url else list(cmp.download_urls)
@@ -385,10 +440,12 @@ def provision(cmp: Component, base_dir: str | Path, *, url: str | None = None,
             tmp = root.parent / (cmp.archive_name or f"{cmp.key}.zip")
             try:
                 log.info("下载组件 %s: %s", cmp.key, u)
+                _notify(stage, "downloading")
                 download(u, tmp, progress=progress)
             except Exception as e:  # noqa: BLE001 每个镜像都要试
                 errors.append(f"{u} → {type(e).__name__}: {e}")
                 continue
+            _notify(stage, "extracting")
             ok, msg = install_from_zip(cmp, base_dir, tmp)
             try:
                 tmp.unlink()
@@ -399,6 +456,7 @@ def provision(cmp: Component, base_dir: str | Path, *, url: str | None = None,
                 return True, msg
             errors.append(f"{u} → {msg}")
         return False, "所有下载源都失败：" + "；".join(errors) if errors else "没有可用下载源"
+    _notify(stage, "extracting")
     ok, msg = install_from_zip(cmp, base_dir, zip_path)
     if ok:
         flatten_single_root(root)

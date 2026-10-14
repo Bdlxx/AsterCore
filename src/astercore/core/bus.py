@@ -17,6 +17,11 @@ from .plugin import HANDLE_NOT_HANDLED, Plugin, PluginContext, PluginMeta
 
 log = logging.getLogger("astercore.plugins")
 
+# 原生插件只认本平台的后缀：Windows 是 .dll，Linux/macOS 是 .so/.dylib。
+# 不区分平台的话，Windows 上会把 Linux 编出来的 .so 当成原生插件登记，
+# 激活时 ctypes 交给系统加载器 → 弹"损坏的映像"模态框（0xc000012f），面板卡死。
+_NATIVE_SUFFIXES = (".dll",) if sys.platform == "win32" else (".so", ".dylib")
+
 
 def _compat_legacy():
     """延迟导入 Linux 版兼容层（仅在遇到老插件时用到）"""
@@ -285,7 +290,7 @@ class PluginLoader:
 
             # 2) 原生 C-ABI 库（ctypes 加载 + nap_plugin_* 导出）
             lib = self.find_source(name)
-            if lib is not None and lib.suffix in (".so", ".dll"):
+            if lib is not None and lib.suffix in _NATIVE_SUFFIXES:
                 meta = PluginMeta(name=name, name_cn=f"原生·{name}",
                                   version="?", description="原生 C-ABI 插件")
                 lp = LoadedPlugin(meta=meta, kind="native", lib_path=lib,
@@ -293,6 +298,13 @@ class PluginLoader:
                 self.loaded[name] = lp
                 log.info("已登记原生插件 %s (%s)", name, lib.name)
                 return lp
+            if lib is not None and lib.suffix in (".so", ".dll", ".dylib"):
+                # "文件在、格式不对"要和"没这个插件"分开报：从 Linux 版搬插件
+                # 过来的人最常踩的就是这个坑，只说"无法加载"会让人查半天。
+                log.warning("跳过原生插件 %s：%s 不是本平台（%s）的动态库，"
+                            "需重新编译为 %s", name, lib.name, sys.platform,
+                            _NATIVE_SUFFIXES[0])
+                return None
             log.warning("插件 %s 文件不存在或无法加载", name)
             return None
         except Exception as e:

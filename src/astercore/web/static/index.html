@@ -147,34 +147,29 @@ PANEL.endpoints = {
   headerButtons: null
 };
 
-/* 与 Linux 端同一套导航；桌面端多「账号」「运行方式」「安全设置」 */
+/* 侧栏只留日常用的几页（用户要求）：左下角只保留「设置」齿轮，
+   更新 / 设置 / 引导 都挪进那个齿轮向右弹出的卡片里。
+   「NapCat」用官方图标常驻在「概览」下面（用户要求）。 */
 PANEL.nav = [
   { id: 'dashboard', icon: '📊', label: '概览', group: '概览' },
-  { id: 'accounts', icon: '👥', label: '账号', group: '管理', sub: true },
-  { id: 'config', icon: '⚙️', label: '插件配置', group: '管理', sub: true },
-  { id: 'logs', icon: '📋', label: '运行日志', group: '管理' },
-  { id: 'guide-page', icon: '🚀', label: '连接引导', group: '管理' },
-  { id: 'settings', icon: '⚙️', label: '设置', group: '设置' },
-  { id: 'about-page', icon: '🔄', label: '关于与更新', group: '设置' }
+  { id: 'napcat', icon: '<img class="ico" src="napcat.png" alt="">', label: 'NapCat', group: '概览' },
+  { id: 'config', icon: '🧩', label: '插件配置', group: '管理', sub: true },
+  { id: 'logs', icon: '📋', label: '运行日志', group: '管理' }
 ];
 
-/* 账号列表（侧边栏二级菜单 + 账号页共用） */
+/* 左下角齿轮弹出的卡片（用户要求：显示「更新」「设置」「引导」） */
+PANEL.appMenu = [
+  { id: 'about-page', icon: '🔄', label: '更新' },
+  { id: 'settings', icon: '⚙️', label: '设置' },
+  { id: 'guide-page', icon: '🚀', label: '引导' }
+];
+
+/* 账号列表（左上角账号浮层 + 账号页共用） */
 async function loadAccounts() {
   const d = await j('/api/accounts');
   ACCTS = (d && d.data) || [];
   if (!AID && ACCTS.length) AID = ACCTS.find(function (a) { return a.running; })?.account_id || ACCTS[0].account_id;
   return ACCTS;
-}
-function renderAccountMenu(sub) {
-  if (!ACCTS.length) { sub.innerHTML = '<div class="nav-sub-loading">还没有账号</div>'; return; }
-  sub.innerHTML = ACCTS.map(function (a) {
-    const active = a.account_id === AID;
-    return '<div class="acct-row ' + (active ? 'active' : '') + '" role="button" tabindex="0"'
-      + ' data-acct-pick="' + PANEL.esc(a.account_id) + '">'
-      + '<span class="status-dot ' + (a.running ? 'green' : 'red') + '"></span>'
-      + '<span class="min-w-0" style="min-width:0;flex:1"><span class="a-name">' + PANEL.esc(a.display_name || a.account_id)
-      + '</span><div class="a-sub">ID ' + PANEL.esc(a.account_id) + ' · ' + PANEL.esc(a.backend_name || '') + '</div></span></div>';
-  }).join('');
 }
 function renderPluginMenu(sub) {
   const keys = Object.keys(PLUGINS);
@@ -182,9 +177,12 @@ function renderPluginMenu(sub) {
   if (!keys.length) { sub.innerHTML = '<div class="nav-sub-loading">账号未运行或没有插件</div>'; return; }
   sub.innerHTML = keys.map(function (k) {
     const p = PLUGINS[k], active = PANEL.key === k && PANEL.page === 'config';
-    return '<div class="nav-sub-item ' + (active ? 'active' : '') + '" role="button" tabindex="0"'
-      + (active ? ' aria-current="page"' : '') + ' data-open="config" data-key="' + PANEL.esc(k) + '">'
-      + PANEL.esc(p.display || k) + (p.enabled === false ? ' <span class="el-tag warning">停用</span>' : '')
+    return '<div class="nav-sub-item has-icon ' + (active ? 'active' : '') + '" role="button" tabindex="0"'
+      + (active ? ' aria-current="page"' : '') + ' data-open="config" data-key="' + PANEL.esc(k) + '"'
+      + ' title="' + PANEL.esc(p.display || k) + '">'
+      + '<span class="icon" aria-hidden="true">@</span>'
+      + '<span class="nav-sub-label">' + PANEL.esc(p.display || k) + '</span>'
+      + (p.enabled === false ? '<span class="el-tag warning">停用</span>' : '')
       + (PANEL.dirty[k] ? '<span class="unsaved-dot" title="有未保存的修改"></span>' : '') + '</div>';
   }).join('');
 }
@@ -203,7 +201,6 @@ async function loadPlugins() {
 /* 账号切换：保持当前页，只换上下文 */
 async function pickAccount(aid) {
   AID = aid;
-  PANEL.subOpen.accounts = true;
   await loadPlugins();
   const a = ACCTS.find(function (x) { return x.account_id === aid; }) || {};
   PANEL.$('botName').textContent = a.display_name || aid;
@@ -229,6 +226,326 @@ function formMsg(id, text, bad) {
   if (!el) return;
   el.textContent = text || '';
   el.style.color = bad ? 'var(--color-danger)' : 'var(--text-secondary)';
+}
+
+/* 引导页二维码：后端 qr_code() 给的是图片路径 / 文本，没有可直接用的地址，
+   所以优先用后端补的 data_url（桌面 file:// 与浏览器两端都能内联显示），
+   没有就退回图片路由（浏览器模式可用）。 */
+function showGuideQR(key, qr) {
+  const box = document.getElementById('gdQR');
+  if (!box) return;
+  qr = qr || {};
+  if (qr.kind === 'image') {
+    const src = qr.data_url || ('/api/guide/qr?key=' + encodeURIComponent(key) + '&raw=1&t=' + Date.now());
+    box.innerHTML = '<img alt="登录二维码" src="' + src + '" style="width:220px;border-radius:8px">'
+      + '<div class="cf-help">用手机 QQ 扫码登录</div>';
+  } else if (qr.kind === 'text') {
+    box.innerHTML = '<div class="cf-help">二维码（文本）：</div>'
+      + '<pre style="white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto">'
+      + PANEL.esc(qr.text || '') + '</pre>';
+  } else {
+    box.innerHTML = '<div class="cf-help">暂时没拿到二维码：组件可能还在启动，稍后重新点「③ 启动…」；也可能已经登录过了。</div>';
+  }
+}
+
+/* ---------------- 组件下载进度（顶栏「下载中 x% / 解压中」） ----------------
+   用户要求：下载状态直接显示在顶部栏。顶栏是双端共用外壳渲染的，所以这里不动共用
+   文件，只往 .header-right 里插一个自己的标签；进度读 /api/guide/status 的 jobs
+   （桌面 file:// 模式与浏览器模式都是同一份数据）。 */
+function topJobEl() {
+  let el = document.getElementById('topJob');
+  if (el) return el;
+  const right = document.querySelector('.header-right');
+  if (!right) return null;
+  el = document.createElement('span');
+  el.id = 'topJob';
+  el.className = 'el-tag info';
+  el.style.display = 'none';
+  const slot = document.getElementById('headerExtraSlot');
+  if (slot && slot.parentNode === right) right.insertBefore(el, slot);
+  else right.insertBefore(el, right.firstChild);
+  return el;
+}
+function showTopJob(text) {
+  const el = topJobEl();
+  if (!el) return;
+  el.textContent = text;
+  el.style.display = '';
+}
+function hideTopJob() { const el = topJobEl(); if (el) el.style.display = 'none'; }
+
+let JOB_TIMER = null;
+
+function jobText(job) {
+  if (!job) return '';
+  if (job.step === 'extracting') return '解压中…';
+  if (job.step === 'downloading') {
+    const pct = job.percent || (job.total ? Math.round(job.got * 100 / job.total) : 0);
+    return pct ? ('下载中 ' + pct + '%') : '下载中…';
+  }
+  if (job.step === 'done') return '下载完成';
+  if (job.step === 'failed') return '下载失败';
+  return '';
+}
+function stopJobWatch() { if (JOB_TIMER) { clearInterval(JOB_TIMER); JOB_TIMER = null; } }
+
+/* 只在有任务时轮询（结束即停）：顶栏 + 页面上的 #gdJob 一起更新 */
+function watchGuideJob(key, onDone) {
+  key = key || 'napcat';
+  stopJobWatch();
+  const tick = async function () {
+    let job = null;
+    try {
+      const r = await j('/api/guide/status');
+      job = r && r.data && r.data.jobs && r.data.jobs[key];
+    } catch (e) { return; }
+    if (!job) return;
+    formMsg('gdJob', jobText(job) + (job.msg ? '：' + job.msg : ''));
+    if (job.running) { showTopJob(jobText(job)); return; }
+    stopJobWatch();
+    if (job.step === 'done') {
+      showTopJob('下载完成');
+      setTimeout(hideTopJob, 8000);
+      if (onDone) onDone(job);
+    } else {
+      hideTopJob();
+      PANEL.toast('安装失败：' + (job.msg || '未知原因'), 'error');
+    }
+  };
+  tick();
+  JOB_TIMER = setInterval(tick, 700);
+}
+
+/* 下载完成 → 弹窗，并可直接进「账号」页建连接（用户要求） */
+async function afterComponentDownload() {
+  const go = await PANEL.dialog({
+    title: '下载完成',
+    message: 'NapCat 已下载并解压到组件目录。接下来去用户管理页添加账号、建立连接。',
+    confirmText: '去创建连接', cancelText: '稍后'
+  });
+  if (!go) return;
+  await PANEL.goPage('accounts');
+  openAcctDialog(0);          /* goPage 不 await 渲染 → 轮询等弹窗出现 */
+}
+
+function openAcctDialog(tries) {
+  tries = (tries || 0) + 1;
+  if (document.getElementById('acctDlg')) {
+    const fn = PANEL.hooks.actions && PANEL.hooks.actions['acct-add'];
+    if (fn) fn();
+    return;
+  }
+  if (tries > 25) return;
+  setTimeout(function () { openAcctDialog(tries); }, 120);
+}
+
+/* 启动时若已有安装任务在跑（例如安装中刷新过页面），接着把进度显示下去 */
+async function resumeJobWatch() {
+  try {
+    const r = await j('/api/guide/status');
+    const jobs = (r && r.data && r.data.jobs) || {};
+    const keys = Object.keys(jobs);
+    for (let i = 0; i < keys.length; i += 1) {
+      if (jobs[keys[i]] && jobs[keys[i]].running) { watchGuideJob(keys[i], null); return; }
+    }
+  } catch (e) { /* 拿不到就当没有任务 */ }
+}
+
+/* 账号弹窗两步走（用户要求：先选连接方式，再填对应信息）。
+   acctShowMode 由选卡 / 编辑账号调用；acctReset 回到"选方式"那一步。 */
+function acctShowMode(mode) {
+  mode = (mode === 'lagrange') ? 'lagrange' : 'onebot';
+  const hid = document.getElementById('ac_mode');
+  if (hid) hid.value = mode;
+  const step1 = document.getElementById('acctStep1');
+  const fields = document.getElementById('acctFields');
+  const conn = document.getElementById('acctConnFields');
+  const help = document.getElementById('acctModeHelp');
+  if (step1) step1.style.display = 'none';
+  if (fields) fields.style.display = '';
+  if (conn) conn.style.display = (mode === 'onebot') ? '' : 'none';
+  if (help) {
+    help.innerHTML = (mode === 'lagrange')
+      ? '<b>内置协议</b>：软件自带 Lagrange.OneBot，端口与令牌由软件自动配置，不用填连接信息。'
+      : '<b>NapCat</b>：填个 QQ 号就行 —— 端口与令牌由软件写进 NapCat 配置（令牌随机生成），两边自动对齐。';
+  }
+  if (mode === 'onebot') {
+    const det = document.getElementById('acctManual');
+    if (det) det.open = false;              /* 自动配置才是默认路径：手动那栏收起来 */
+    acctNapcatHint();
+  }
+  const qq = document.getElementById('ac_id');
+  if (qq) qq.focus();
+}
+
+/* 选 NapCat 时顺手查一下装没装：没装就建号 = 建完连不上，用户会以为软件坏了 */
+async function acctNapcatHint() {
+  const el = document.getElementById('acctNcHint');
+  if (!el) return;
+  const auto = '端口与令牌由软件写进 NapCat 配置（令牌随机生成），这里不用填。';
+  el.style.color = 'var(--text-secondary)';
+  el.textContent = auto;
+  try {
+    const r = await j('/api/guide/status');
+    const c = (r && r.data && r.data.components && r.data.components.napcat) || {};
+    if (c.installed === false) {
+      el.style.color = 'var(--color-warning)';
+      el.textContent = '还没装 NapCat：先在侧栏「NapCat」页点「下载并解压」，装好再启动扫码。';
+    }
+  } catch (e) { /* 查不到就只留自动配置那句 */ }
+}
+
+function acctReset() {
+  PANEL.hooks._acctConn = null;
+  const step1 = document.getElementById('acctStep1');
+  const fields = document.getElementById('acctFields');
+  const conn = document.getElementById('acctConnFields');
+  if (step1) step1.style.display = '';
+  if (fields) fields.style.display = 'none';
+  if (conn) conn.style.display = '';
+}
+
+/* 保存前把连接信息准备好（返回 {backend, note, error}）：
+   · 内置协议 / NapCat 都是**软件自己写组件配置**，用户不该手填端口和令牌；
+   · 配置里已有端口/令牌就原样复用 —— 重新生成会把正在跑的账号踢下线；
+   · 手填了地址（自建的外部 NapCat）就尊重用户的，不去动组件配置。 */
+function portOf(url) {
+  const m = String(url || '').match(/:(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+function isLocalEndpoint(url) {
+  const m = String(url || '').match(/^wss?:\/\/([^/:]+)/i);
+  return !m || m[1] === '127.0.0.1' || m[1] === 'localhost' || m[1] === '::1';
+}
+
+async function prepBackend(f) {
+  const name = f.backend_name || 'onebot';
+  const known = PANEL.hooks._acctConn;
+  const reused = (known && known.backend === name && known.ws)
+    ? { ws: known.ws, http: known.http || '', token: known.token || '' } : null;
+  const typed = {
+    ws: String(f.ws_url || '').trim(),
+    http: String(f.http_url || '').trim(),
+    token: String(f.access_token || ''),
+  };
+  let ws = typed.ws || (reused ? reused.ws : '');
+  let http = typed.http || (reused ? reused.http : '');
+  let tok = typed.token || (reused ? reused.token : '');
+
+  if (name === 'onebot' && ws && !isLocalEndpoint(ws)) {
+    /* 外部的 NapCat：不动本机组件配置，照用户填的连 */
+    return { backend: { name: name, ws_url: ws, http_url: http, access_token: tok }, note: '', error: '' };
+  }
+  const key = (name === 'lagrange') ? 'lagrange' : 'napcat';
+  const payload = { key: key, qq: f.account_id };
+  const wp = portOf(ws), hp = portOf(http);
+  if (wp) payload.ws_port = wp;
+  if (hp) payload.http_port = hp;
+  if (tok) payload.token = tok;
+  try {
+    /* 写配置（读-改-写，只动我们负责的键）→ 拿回来的就是权威端口与令牌 */
+    const r = await post('/api/guide/config', payload);
+    if (r && r.ok && r.data) {
+      const changed = (r.data.ws_url !== ws) || (r.data.http_url !== http)
+        || (r.data.access_token !== tok);
+      return {
+        backend: { name: name, ws_url: r.data.ws_url, http_url: r.data.http_url,
+                   access_token: r.data.access_token },
+        note: '已写入' + (key === 'lagrange' ? '内置协议' : 'NapCat') + '配置（' + r.data.ws_url + '）',
+        changed: changed, key: key,
+        error: '',
+      };
+    }
+    if (ws) return { backend: { name: name, ws_url: ws, http_url: http, access_token: tok },
+                     note: '', changed: false, key: key, error: '' };
+    return { backend: null, note: '', error: (r && r.error) || '写连接配置失败' };
+  } catch (e) {
+    if (ws) return { backend: { name: name, ws_url: ws, http_url: http, access_token: tok },
+                     note: '', changed: false, key: key, error: '' };
+    return { backend: null, note: '', error: '写连接配置失败：' + (e.message || e) };
+  }
+}
+
+/* 组件的配置是在启动时读进内存的（NapCat 没有文件监听）：
+   刚改过它的配置、而它正在跑 —— 问一句要不要现在重启，否则用户会以为"连不上=软件坏了"。 */
+async function offerComponentRestart(prep) {
+  const key = prep.key;
+  if (!prep.changed || (key !== 'napcat' && key !== 'lagrange')) return;
+  let running = false;
+  try {
+    const r = await post('/api/guide/status', {});
+    running = !!((((r || {}).data || {}).components || {})[key] || {}).running;
+  } catch (e) { return; }
+  if (!running) return;
+  const yes = await PANEL.dialog({
+    title: '要重启 ' + (key === 'napcat' ? 'NapCat' : '内置协议') + ' 吗？',
+    message: '连接信息刚写进它的配置文件，但组件只在启动时读一次 —— 不重启的话新配置不生效'
+      + '（重启一般不用重新扫码；登录态失效时才需要）。',
+    confirmText: '现在重启', cancelText: '我手动重启'
+  });
+  if (!yes) return;
+  await post('/api/guide/stop', { key: key });
+  await new Promise(function (res) { setTimeout(res, 800); });
+  const r2 = await post('/api/guide/start', { key: key });
+  if (r2 && r2.ok) PANEL.toast((key === 'napcat' ? 'NapCat' : '内置协议') + ' 已重启', 'success');
+}
+
+/* 设置页「改完即存」：用户要求"本页不保留保存按钮，就像正常软件的设置那样"。
+   三块（后端模式 / 安全设置 / 页面与端口）各自 change 后立即 POST，
+   回显写到 svrtMsg / svauthMsg / svpageMsg。 */
+function bindSettingsAutoSave() {
+  const root = PANEL.$('pageContent');
+  if (!root || root.__settingsBound) return;      /* #pageContent 不随换页重建，只绑一次 */
+  root.__settingsBound = true;
+
+  const saveRuntime = async function () {
+    const hid = document.getElementById('rt_mode');
+    const picked = root.querySelector('input[name="rt_pick"]:checked');
+    const mode = picked ? picked.value : (hid ? hid.value : '');
+    if (!mode) return;
+    if (hid) hid.value = mode;
+    formMsg('svrtMsg', '保存中…');
+    const r = await post('/api/settings/runtime', { backend_mode: mode });
+    formMsg('svrtMsg', (r && r.ok) ? '已保存' : ((r && r.error) || '保存失败'), !(r && r.ok));
+  };
+  const saveAuth = async function () {
+    const d = collectForm('auth');
+    if (!d.mode) return;
+    formMsg('svauthMsg', '保存中…');
+    const r = await post('/api/settings/auth', d);
+    if (r && r.ok) { formMsg('svauthMsg', '已保存'); return; }
+    formMsg('svauthMsg', (r && r.error) || '保存失败', true);
+    /* 没存上（例如"开密码鉴权却没填密码"）：把选择退回真实状态，别让界面撒谎 */
+    try {
+      const st = await j('/api/auth/status');
+      const real = (st && st.data && st.data.mode) || 'none';
+      const sel = document.getElementById('au_mode');
+      if (sel) sel.value = real;
+    } catch (e) { /* 读不到就保持原样，错误提示已经给了 */ }
+  };
+  const savePage = async function () {
+    const mode = document.getElementById('sp_mode');
+    const port = document.getElementById('sp_port');
+    const body = { page_mode: mode ? mode.value : 'window' };
+    const pv = port ? String(port.value || '').trim() : '';
+    if (pv) body.port = pv;                       /* 留空 = 用默认端口，不发 port 字段 */
+    formMsg('svpageMsg', '保存中…');
+    const r = await post('/api/setup/page', body);
+    formMsg('svpageMsg', (r && r.ok)
+      ? ('已保存' + (r.data && r.data.restart_needed ? '（重启后生效）' : ''))
+      : ((r && r.error) || '保存失败'), !(r && r.ok));
+  };
+
+  root.addEventListener('change', function (e) {
+    const t = e.target;
+    if (!t) return;
+    if (t.id === 'sp_mode' || t.id === 'sp_port') { savePage(); return; }
+    if (t.id === 'au_mode' || t.id === 'au_pwd') { saveAuth(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-rt')) { saveRuntime(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-act') && t.getAttribute('data-act') === 'rt-pick') {
+      saveRuntime();
+    }
+  });
 }
 
 PANEL.hooks = {
@@ -278,14 +595,16 @@ PANEL.hooks = {
     PANEL.$('botSub').textContent = AID ? ('ID ' + AID + ' · ' + (a.backend_name || '')) : '还没有账号';
     document.title = (a.display_name || 'AsterCore') + ' - 管理面板';
     await loadPlugins();
+    resumeJobWatch();          /* 刷新过页面时，接着显示正在跑的安装进度 */
   },
   logout: function () { post('/api/logout').then(function () { location.reload(); }); },
   subMenus: {
-    accounts: function (sub) { renderAccountMenu(sub); },
     config: function (sub) { renderPluginMenu(sub); loadPlugins(); }
   },
   mounted: {
     dashboard: function () { PANEL.startPoll(PANEL.refreshStatusParts, 10000); },
+    napcat: function () { resumeJobWatch(); },
+    settings: function () { bindSettingsAutoSave(); },
     logs: function () {
       PANEL.syncLogState('');
       PANEL.loadLogs('');
@@ -364,6 +683,26 @@ PANEL.hooks = {
     return PANEL.hooks.groupCache;
   },
   groupSelect: function () { return { groups: PANEL.hooks.groupCache || [], error: PANEL.hooks.groupErr || '' }; },
+  /* 左上角账号卡向右弹出的卡片（共用外壳在点账号卡时回调这里）：
+     列出所有账号，点一张就切换；「切换后插件设置的对象跟着切」由 pickAccount 负责。 */
+  accountPop: async function (pop) {
+    try { await loadAccounts(); } catch (e) { /* 列表拿不到就显示提示 */ }
+    const rows = ACCTS.map(function (a) {
+      const active = a.account_id === AID;
+      return '<div class="acct-row ' + (active ? 'active' : '') + '" role="button" tabindex="0"'
+        + ' data-acct-pick="' + PANEL.esc(a.account_id) + '">'
+        + '<span class="status-dot ' + (a.running ? 'green' : 'red') + '"></span>'
+        + '<span style="min-width:0;flex:1"><span class="a-name">' + PANEL.esc(a.display_name || a.account_id)
+        + '</span><div class="a-sub">ID ' + PANEL.esc(a.account_id) + ' · ' + PANEL.esc(a.backend_name || '')
+        + (active ? ' · 当前' : '') + '</div></span></div>';
+    }).join('');
+    pop.innerHTML = '<div class="acct-pop-title">切换账号</div>'
+      + (rows || '<div class="nav-sub-loading">还没有账号</div>')
+      + '<div class="acct-pop-sep"></div>'
+      + '<div class="acct-row" role="button" tabindex="0" data-nav="accounts">'
+      + '<span style="min-width:0;flex:1"><span class="a-name">管理账号…</span>'
+      + '<div class="a-sub">新建 / 编辑 / 删除</div></span></div>';
+  },
   actions: {
     'win-min': async function () {
       await post('/api/app/window', { action: 'minimize' });
@@ -381,14 +720,17 @@ PANEL.hooks = {
       PANEL.hooks._editing = null;
       const put = function (id, v) { const el = document.getElementById(id); if (el) { el.value = v; } };
       put('ac_id', ''); put('ac_name', '');
-      put('ac_ws', 'ws://127.0.0.1:3001'); put('ac_http', 'http://127.0.0.1:3000'); put('ac_token', '');
+      /* 连接信息留空 = 由软件写组件配置（端口自动、令牌随机）；自建外部 NapCat 才手填 */
+      put('ac_ws', ''); put('ac_http', ''); put('ac_token', '');
+      put('ac_mode', 'onebot');
+      formMsg('acMsg', '');
+      acctReset();                                   /* 回到第一步：先选连接方式 */
       const idEl = document.getElementById('ac_id');
       if (idEl) { idEl.readOnly = false; }
       const ttl = document.getElementById('acctDlgTitle');
       if (ttl) { ttl.textContent = '添加账号'; }
       const dlg = document.getElementById('acctDlg');
       if (dlg) { dlg.hidden = false; }
-      if (idEl) { idEl.focus(); }
       return { ok: true, message: '填写账号信息后点「保存」' };
     },
     'acct-edit': function (el) {
@@ -400,12 +742,20 @@ PANEL.hooks = {
       put('ac_ws', el.getAttribute('data-ws') || 'ws://127.0.0.1:3001');
       put('ac_http', el.getAttribute('data-http') || 'http://127.0.0.1:3000');
       put('ac_token', el.getAttribute('data-token') || '');
+      put('ac_mode', el.getAttribute('data-backend') || 'onebot');
+      formMsg('acMsg', '');
+      /* 记下这个账号真实的连接信息：编辑内置协议账号时不能重新生成令牌 */
+      PANEL.hooks._acctConn = { backend: el.getAttribute('data-backend') || 'onebot',
+                                ws: el.getAttribute('data-ws') || '',
+                                http: el.getAttribute('data-http') || '',
+                                token: el.getAttribute('data-token') || '' };
       const idEl = document.getElementById('ac_id');
       if (idEl) { idEl.readOnly = true; }        /* 编辑时不让改 ID（它是目录名） */
       const ttl = document.getElementById('acctDlgTitle');
       if (ttl) { ttl.textContent = '编辑账号 ' + aid; }
       const dlg = document.getElementById('acctDlg');
       if (dlg) { dlg.hidden = false; }
+      acctShowMode(PANEL.hooks._acctConn.backend);     /* 直接进第二步（已知连接方式） */
       return { ok: true, message: '已载入账号 ' + aid };
     },
     'acct-dlg-cancel': function () {
@@ -441,12 +791,12 @@ PANEL.hooks = {
       return { ok: true, message: '页面设置已保存' };
     },
     'rt-pick': function (el) {
-      /* 单选按钮：把选中的值同步给隐藏输入（保存仍走 collectForm('rt') 的 data-rt 约定） */
+      /* 单选按钮：把选中的值同步给隐藏输入；保存由设置页的 change 自动保存接管 */
       const v = el.getAttribute('value') || '';
       const hid = document.getElementById('rt_mode');
       if (hid) { hid.value = v; }
       const lbl = el.parentNode ? (el.parentNode.textContent || '').trim().split('\n')[0] : v;
-      return { ok: true, message: '已选择：' + (lbl || v) + '（点右下角「保存」生效）' };
+      return { ok: true, message: '已选择：' + (lbl || v) };
     },
     'up-refresh': async function () {
       const r = await post('/api/app/update/status', {});
@@ -499,8 +849,7 @@ PANEL.hooks = {
       store.setItem('prefill', JSON.stringify({
         ws_url: d.ws_url || '', http_url: d.http_url || '', access_token: d.access_token || ''
       }));
-      const nav = document.querySelector('.nav-item[data-page="accounts"]');
-      if (nav) { nav.click(); }
+      await PANEL.goPage('accounts');
       let tries = 0;
       const timer = setInterval(function () {
         tries += 1;
@@ -508,9 +857,24 @@ PANEL.hooks = {
         try { pf = JSON.parse(store.getItem('prefill') || 'null'); } catch (e) { pf = null; }
         const put = function (id, v) { const el = document.getElementById(id); if (el && v) { el.value = v; } };
         if (pf) { put('ac_ws', pf.ws_url); put('ac_http', pf.http_url); put('ac_token', pf.access_token); }
-        if (tries > 12 || (pf && document.getElementById('ac_ws'))) { clearInterval(timer); }
+        if (tries > 12 || (pf && document.getElementById('ac_ws'))) {
+          /* 表单搬进弹窗后，填完必须把弹窗打开，否则用户看不见"已填入" */
+          if (pf && document.getElementById('ac_ws')) {
+            const ttl = document.getElementById('acctDlgTitle');
+            const idEl = document.getElementById('ac_id');
+            const dlg = document.getElementById('acctDlg');
+            PANEL.hooks._editing = null;
+            if (ttl) { ttl.textContent = '添加账号'; }
+            if (idEl) { idEl.readOnly = false; }
+            if (dlg) { dlg.hidden = false; }
+            /* 连接信息已经填好了（来自第②步写配置）：直接进第二步，别让用户再选一次 */
+            acctReset();
+            acctShowMode('onebot');
+          }
+          clearInterval(timer);
+        }
       }, 250);
-      return { ok: true, message: '已填入账号表单（填个 QQ 号再点保存即可）' };
+      return { ok: true, message: '已填入「添加账号」弹窗（填个 QQ 号再点保存即可）' };
     },
     'gd-create': async function (el) {
       const qq = document.getElementById('gdQQ');
@@ -537,48 +901,90 @@ PANEL.hooks = {
     },
     'gd-open': async function (el) {
       const url = el.getAttribute('data-url') || '';
+      const dirEl = document.getElementById('gdDir');
+      const dir = dirEl ? (dirEl.textContent || '').trim() : '';
+      const tip = '下载后请把压缩包解压到组件目录' + (dir ? '：' + dir : '')
+        + '，装到别处第②③步不可用。';
+      formMsg('gdOut', tip);
       const r = await post('/api/app/open-url', { url: url });
       if (!r || !r.ok) {
         try { window.open(url, '_blank'); } catch (e) { /* 兜底失败就只提示 */ }
-        return { ok: true, message: '已尝试用浏览器打开：' + url };
+        return { ok: true, message: '已尝试用浏览器打开下载页。' + tip };
       }
-      return { ok: true, message: '已在浏览器打开下载页，装好后回来点第②步' };
+      return { ok: true, message: '已在浏览器打开下载页。' + tip };
     },
     'gd-install': async function (el) {
-      const key = el.getAttribute('data-key') || 'lagrange';
+      const key = el.getAttribute('data-key') || 'napcat';
       const r = await post('/api/guide/install', { key: key });
-      formMsg('gdOut', (r && r.ok) ? '已开始后台下载安装，进度看「看日志」' : ((r && r.error) || '安装失败'), !(r && r.ok));
-      return { ok: !!(r && r.ok), message: (r && r.ok) ? '已开始后台下载安装' : ((r && r.error) || '安装失败') };
+      const started = !!(r && r.ok && (!r.data || r.data.started !== false));
+      formMsg('gdJob', started ? '已开始下载…（进度看顶部栏）' : ((r && (r.error || (r.data || {}).msg)) || '安装失败'),
+              !started);
+      if (started) { watchGuideJob(key, afterComponentDownload); }
+      return { ok: started, message: started ? '已开始下载（进度看顶部栏）'
+                                            : ((r && r.error) || '安装失败') };
     },
     'gd-config': async function (el) {
       const key = el.getAttribute('data-key') || 'lagrange';
-      const r = await post('/api/guide/config', { key: key });
+      /* 顺手带上「更多操作」里填的 QQ：有 QQ 就写 onebot11_<QQ>.json，
+         没有就写 NapCat 认的兜底 onebot11.json（不写的话那两个文件它都不读）。 */
+      const qqEl = document.getElementById('gdQQ');
+      const typedQQ = qqEl ? String(qqEl.value || '').trim() : '';
+      const r = await post('/api/guide/config', typedQQ ? { key: key, qq: typedQQ } : { key: key });
       if (!r || !r.ok) { formMsg('gdOut', (r && r.error) || '写配置失败', true); return; }
       const d = r.data || {};
-      window.__gdCfg = d;                      /* 记住这份连接信息，供"填入账号表单"用 */
+          window.__gdCfg = d;                      /* 记住这份连接信息，供"填入添加账号弹窗"用 */
       const box = document.getElementById('gdCfg');
       if (box) {
         box.style.display = 'block';
-        box.innerHTML = '<div class="cf-field"><label class="cf-label">把这串填到账号表单</label>'
+            box.innerHTML = '<div class="cf-field"><label class="cf-label">把这串填到「添加账号」弹窗</label>'
           + '<input type="text" readonly value="' + PANEL.esc(d.ws_url || '') + '">'
           + '<input type="text" readonly value="' + PANEL.esc(d.access_token || '') + '" style="margin-top:6px">'
           + '<div class="cf-help">ws 地址 + 令牌；配置文件：' + PANEL.esc(d.path || '') + '</div>'
           + '<button class="btn btn-default" data-act="gd-prefill" style="margin-top:8px">'
-          + '把这份连接信息填入账号表单（手动建号用）</button></div>';
+              + '填入「添加账号」弹窗（手动建号用）</button></div>';
       }
       formMsg('gdOut', '配置已写入（端口与令牌已自动生成）');
       return { ok: true, message: '配置已写入' };
     },
     'gd-host': async function (el) {
       const key = el.getAttribute('data-key') || 'lagrange';
-      const r = await post('/api/guide/host', { key: key });
+      const qqEl = document.getElementById('gdQQ');
+      const typedQQ = qqEl ? String(qqEl.value || '').trim() : '';
+      /* 顺手把「更多操作」里已填的 QQ 带上：这样后端写配置时就能对上号，
+         下面建号提示也能直接给出 QQ，不用再问一遍。 */
+      const r = await post('/api/guide/host', typedQQ ? { key: key, qq: typedQQ } : { key: key });
       if (!r || !r.ok) { formMsg('gdOut', (r && r.error) || '启动失败', true); return; }
       const d = r.data || {};
       formMsg('gdOut', d.ok ? ('组件已启动' + (d.msg ? '：' + d.msg : '')) : ('启动失败：' + (d.msg || '')));
-      const qr = d.qr || {};
-      const box = document.getElementById('gdQR');
-      if (box && qr.data_url) { box.innerHTML = '<img alt="二维码" src="' + qr.data_url + '" style="width:220px">'; }
-      return { ok: !!d.ok, message: d.ok ? '组件已启动' : ('启动失败：' + (d.msg || '')) };
+      showGuideQR(key, d.qr);
+      if (!d.ok) return { ok: false, message: '启动失败：' + (d.msg || '') };
+      /* 用户要求：启动取二维码后，提示"是否直接根据登录账号添加账号"。 */
+      const known = String(d.account_id || (d.config && d.config.account_id) || '').trim();
+      const hasQQ = known && known !== 'default';
+      const yes = await PANEL.dialog({
+        title: '用登录的账号建号？', confirmText: hasQQ ? '建号并启动' : '去填 QQ', cancelText: '先不建',
+        message: hasQQ
+          ? ('检测到账号 ' + known + '。是否直接用这个账号建立账号并启动？')
+          : '扫码登录成功后，是否用刚登录的 QQ 建立账号并启动？需要先填一下 QQ 号。'
+      });
+      if (!yes) return { ok: true, message: '组件已启动' };
+      let useQQ = hasQQ ? known : typedQQ;
+      if (!useQQ) {
+        /* 认不出 QQ：把「更多操作」展开、光标落到 QQ 框，让用户补一下 */
+        const det = qqEl && qqEl.closest('details');
+        if (det) det.open = true;
+        if (qqEl) qqEl.focus();
+        formMsg('gdOut', '请在上面「更多操作 → 用这串连接信息建账号」里填 QQ 号，再点「一键建好并启动」');
+        return { ok: true, message: '请填入 QQ 号后点「一键建好并启动」' };
+      }
+      const c = await post('/api/guide/account', { account_id: useQQ, key: key, start: true });
+      if (c && c.ok) {
+        formMsg('gdOut', '已用 QQ ' + useQQ + ' 建好账号' + (c.data && c.data.started ? '并启动' : ''));
+        PANEL.toast('账号 ' + useQQ + ' 已建好', 'success');
+        return { ok: true, message: '账号 ' + useQQ + ' 已建好' + (c.data && c.data.started ? '并启动' : '') };
+      }
+      formMsg('gdOut', (c && (c.error || (c.data && c.data.error))) || '建号失败', true);
+      return { ok: false, message: (c && (c.error || (c.data && c.data.error))) || '建号失败' };
     },
     'gd-stop': async function (el) {
       const key = el.getAttribute('data-key') || 'lagrange';
@@ -609,11 +1015,21 @@ PANEL.hooks = {
     'create-account': async function (el) {
       const f = collectForm('acct');
       if (!f.account_id) { formMsg('acMsg', '账号 ID 必填', true); return { ok: false, error: '账号 ID 必填' }; }
+      const prep = await prepBackend(f);
+      if (prep.error) { formMsg('acMsg', prep.error, true); return { ok: false, error: prep.error }; }
       const r = await post('/api/app/account-save', {
         account_id: f.account_id, display_name: f.display_name || f.account_id,
-        backend: { ws_url: f.ws_url, http_url: f.http_url, access_token: f.access_token }
+        backend: prep.backend
       });
-      if (r && r.ok) { AID = f.account_id; await loadAccounts(); await loadPlugins(); PANEL.toast('账号已创建', 'success'); const dlg = document.getElementById('acctDlg'); if (dlg) { dlg.hidden = true; } PANEL.renderPage(); }
+      if (r && r.ok) {
+        AID = f.account_id;
+        await loadAccounts(); await loadPlugins();
+        PANEL.toast('账号已创建' + (prep.note ? '；' + prep.note : ''), 'success');
+        const dlg = document.getElementById('acctDlg');
+        if (dlg) { dlg.hidden = true; }
+        PANEL.renderPage();
+        offerComponentRestart(prep);   /* 不 await：别让保存按钮一直转（弹窗会盖在它上面） */
+      }
       else formMsg('acMsg', (r && r.error) || '创建失败', true);
       return r || { ok: false };
     },
@@ -628,11 +1044,22 @@ PANEL.hooks = {
     },
     'save-account': async function (el) {
       const f = collectForm('acct');
+      if (!f.account_id) { formMsg('acMsg', '账号 ID 必填', true); return { ok: false, error: '账号 ID 必填' }; }
+      const prep = await prepBackend(f);
+      if (prep.error) { formMsg('acMsg', prep.error, true); return { ok: false, error: prep.error }; }
       const r = await post('/api/app/account-save', {
         account_id: f.account_id, display_name: f.display_name,
-        backend: { ws_url: f.ws_url, http_url: f.http_url, access_token: f.access_token }
+        backend: prep.backend
       });
-      if (r && r.ok) { PANEL.hooks._editing = null; await loadAccounts(); PANEL.toast('账号已保存', 'success'); const dlg = document.getElementById('acctDlg'); if (dlg) { dlg.hidden = true; } PANEL.renderPage(); }
+      if (r && r.ok) {
+        PANEL.hooks._editing = null; PANEL.hooks._acctConn = null;
+        await loadAccounts();
+        PANEL.toast('账号已保存' + (prep.note ? '；' + prep.note : ''), 'success');
+        const dlg = document.getElementById('acctDlg');
+        if (dlg) { dlg.hidden = true; }
+        PANEL.renderPage();
+        offerComponentRestart(prep);   /* 不 await：别让保存按钮一直转（弹窗会盖在它上面） */
+      }
       else formMsg('acMsg', (r && r.error) || '保存失败', true);
       return r || { ok: false };
     },
@@ -657,6 +1084,10 @@ PANEL.hooks = {
 };
 /* 账号切换：侧栏与账号页里点 [data-acct-pick] 都走共用外壳的委托 → 进来这里 */
 PANEL.hooks.pickAccount = pickAccount;
+/* 账号弹窗的两步走：弹窗标记里内联 onclick 调它们，必须挂到 hooks 上才算接上 */
+PANEL.hooks.acctPick = function (mode) { acctShowMode(mode); };
+PANEL.hooks.acctShowMode = acctShowMode;
+PANEL.hooks.acctReset = acctReset;
 
 /* 编辑账号时把 aid 带进片段请求（唯一一处拼 edit=，避免重复参数） */
 PANEL._origPageUrl = PANEL.endpoints.page;
@@ -676,7 +1107,7 @@ try {
   if (_deepPage) {
     setTimeout(function () {
       var _el = document.querySelector('.nav-item[data-page="' + _deepPage + '"]');
-      if (_el) { _el.click(); }
+      if (_el) { _el.click(); } else { PANEL.goPage(_deepPage); }
     }, 400);
   }
 } catch (e) { }

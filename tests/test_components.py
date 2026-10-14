@@ -67,6 +67,57 @@ class MergeWriteTest(unittest.TestCase):
 
 
 class NapCatConfigTest(unittest.TestCase):
+    def test_writes_into_real_work_dir_of_official_shell(self):
+        """官方 Shell 包里 NapCat 本体在 <组件目录>/napcat/，配置得写它那层。
+
+        写错层（写 <组件目录>/config）NapCat 读不到，它会在自己那边另生成一份默认
+        配置 —— 账号里的端口/令牌就跟它永远对不上（包内 napcat.mjs：
+        configPath = <napcat.mjs 所在目录>/config）。
+        """
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td) / "components" / "napcat" / "napcat"
+            work.mkdir(parents=True)
+            (work / "napcat.mjs").write_bytes(b"// stub")
+            p = C.write_napcat_config(td, "10001", 3001, 3000, "tok")
+            self.assertEqual(p, work / "config" / "onebot11_10001.json")
+            self.assertTrue(p.is_file())
+            self.assertFalse((Path(td) / "components" / "napcat" / "config").exists(),
+                             "不能写错层：那层 NapCat 不读")
+
+    def test_reads_legacy_location_as_base(self):
+        """老版本写到 <组件目录>/config 的那份里有用户自己的键 → 一次性搬过来当底稿"""
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td) / "components" / "napcat" / "napcat"
+            work.mkdir(parents=True)
+            (work / "napcat.mjs").write_bytes(b"// stub")
+            legacy = Path(td) / "components" / "napcat" / "config"
+            legacy.mkdir(parents=True)
+            (legacy / "onebot11_7.json").write_text(
+                json.dumps({"keep": {"x": 1}}), encoding="utf-8")
+            p = C.write_napcat_config(td, "7", 3001, 3000, "tok")
+            cfg = json.loads(p.read_text(encoding="utf-8"))
+            self.assertEqual(cfg["keep"], {"x": 1}, "用户其它键要保留")
+            self.assertEqual(cfg["network"]["websocketServers"][0]["port"], 3001)
+
+    def test_work_dir_falls_back_to_component_root(self):
+        """没有 napcat.mjs（测试/别的包结构）：退回组件目录，行为与以前一致"""
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(C.napcat_work_dir(td),
+                             Path(td) / "components" / "napcat")
+
+    def test_no_qq_writes_napcat_fallback_name(self):
+        """还不知道 QQ（引导第②步）要写 NapCat 认的兜底 onebot11.json。
+
+        写成 onebot11_default.json 它读不到 —— 用户点了"写配置"看着成功、其实没写。"""
+        with tempfile.TemporaryDirectory() as td:
+            for arg in ("", "default", None):
+                p = C.write_napcat_config(td, arg, 3001, 3000, "tok")
+                self.assertEqual(p.name, "onebot11.json", f"{arg!r} 应写兜底名")
+            p = C.write_napcat_config(td, "10001", 3001, 3000, "tok")
+            self.assertEqual(p.name, "onebot11_10001.json")
+            self.assertTrue((Path(td) / "components" / "napcat" / "config"
+                             / "onebot11.json").is_file())
+
     def test_writes_network_and_token(self):
         with tempfile.TemporaryDirectory() as td:
             p = C.write_napcat_config(td, "2551736206", 3001, 3000, "tok123")
@@ -167,6 +218,43 @@ class InstallTest(unittest.TestCase):
             z.write_bytes(b"PK\x03\x04broken")
             ok, msg = C.install_from_zip(C.get_component("lagrange"), td, z)
             self.assertFalse(ok)
+
+
+class InstallStageTest(unittest.TestCase):
+    """阶段回调：顶栏要分清"下载中 x% / 解压中"，不然解压那几秒还停在 100%，像卡住"""
+
+    def test_download_then_extract(self):
+        with tempfile.TemporaryDirectory() as td:
+            z = _make_zip(Path(td) / "lag.zip", {"Lagrange.OneBot.exe": b"MZ"},
+                          prefix="Lagrange/")
+            stages: list[str] = []
+            ok, msg = C.provision(C.get_component("lagrange"), td,
+                                  url=Path(z).as_uri(), stage=stages.append)
+            self.assertTrue(ok, msg)
+            self.assertEqual(stages, ["downloading", "extracting"])
+
+    def test_local_zip_reports_extracting_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            z = _make_zip(Path(td) / "lag.zip", {"Lagrange.OneBot.exe": b"MZ"},
+                          prefix="Lagrange/")
+            stages: list[str] = []
+            ok, msg = C.provision(C.get_component("lagrange"), td,
+                                  zip_path=z, stage=stages.append)
+            self.assertTrue(ok, msg)
+            self.assertEqual(stages, ["extracting"])
+
+    def test_stage_errors_do_not_break_install(self):
+        """回调是调用方的东西，抛异常不能拖垮安装"""
+        with tempfile.TemporaryDirectory() as td:
+            z = _make_zip(Path(td) / "lag.zip", {"Lagrange.OneBot.exe": b"MZ"},
+                          prefix="Lagrange/")
+
+            def boom(_name):
+                raise RuntimeError("界面侧出错")
+
+            ok, msg = C.provision(C.get_component("lagrange"), td,
+                                  zip_path=z, stage=boom)
+            self.assertTrue(ok, msg)
 
     def test_flatten_single_root(self):
         with tempfile.TemporaryDirectory() as td:
