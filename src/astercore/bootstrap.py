@@ -278,7 +278,8 @@ def prepare_legacy_env(base_dir: Path) -> dict[str, object]:
        推到安装目录之外去建目录
     1) 子进程编码：jm_downloader 用 utf-8 读子进程 stdout，而 Windows 子进程默认
        cp936 → 中文/emoji 进度行会丢；设 PYTHONIOENCODING/PYTHONUTF8 让子进程继承
-    2) NapCat 图片缓存目录：老插件按 ~/napcat/cache/images 写文件，提前建好
+    2) NapCat 图片缓存目录：老插件按 /app/cache/images 写文件（出口映射到本机），
+       提前建好 —— 装了 NapCat 就建在它自己的工作目录里（见 compat.paths.default_cache_host）
     3) venv 解释器路径：老插件按 venv/bin/python 找解释器，Windows 是
        venv\\Scripts\\python.exe → 在 venv/bin/ 放一个同名副本（保留 pyvenv.cfg 解析）
     4) ffmpeg：找到就把目录塞进 PATH；找不到只报告，不阻塞启动

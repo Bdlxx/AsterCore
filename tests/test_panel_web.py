@@ -641,6 +641,17 @@ class BotAvatarFallbackTest(unittest.TestCase):
         self.assertIn("naturalWidth === 0", self.js, "文件不存在要立刻兜底")
 
 
+class PageTitleTest(unittest.TestCase):
+    """网页端标题（用户指定「栖星管理页面」）：固定住，别再被账号名覆盖回去"""
+
+    def test_title_is_fixed(self):
+        idx = INDEX.read_text(encoding="utf-8")
+        self.assertIn("<title>栖星管理页面</title>", idx)
+        # 以前登录后会把标题改成"<账号名> - 管理面板"，等于静默改掉用户要的标题
+        self.assertNotIn("document.title =", idx)
+        self.assertNotIn("管理面板", idx)
+
+
 class RuntimePageLayoutTest(unittest.TestCase):
     """运行方式页：后端模式是**单选**，右侧按大类分**多张卡片**（用户要求）"""
 
@@ -984,6 +995,64 @@ class GuideInstallPathTest(unittest.TestCase):
         self.assertNotIn("NapCatWinBootMain.exe", self.html, "冗长的逐步清单已按用户要求删掉")
 
 
+class DashboardOverviewTest(unittest.TestCase):
+    """用户要求：概览不重复顶栏已有的信息；齿轮卡片要压住底部操作栏"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountConfig, AccountManager
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        cls._tmp = tempfile.TemporaryDirectory()
+        base = Path(cls._tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        cls.state = AppState(base)
+        cls.state.load()
+        mgr = AccountManager(accounts_dir=base / "accounts")
+        mgr.save_config(AccountConfig(account_id="10001", display_name="依星",
+                                      backend_name="onebot",
+                                      ws_url="ws://127.0.0.1:3001"))
+        cls.panel = ManagerWebPanel(mgr, lambda: None, app_state=cls.state)
+        client = cls.panel.app.test_client()
+        cls.page = client.get("/ui/page/dashboard?aid=10001").get_json()["data"]["html"]
+        cls.status = client.get("/ui/status?aid=10001").get_json()["data"]
+        cls.css = (ROOT / "src" / "astercore" / "web" / "static" / "panel.css").read_text(encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_no_cards_duplicating_the_topbar(self):
+        """账号状态与版本顶栏/左侧身份区都有了 —— 概览别再摊一遍（用户指定去掉）"""
+        self.assertNotIn('<div class="label">账号状态</div>', self.page)
+        self.assertNotIn('<div class="label">版本</div>', self.page)
+        self.assertNotIn("dashBotVal", self.page)
+        self.assertIn("后端连接", self.page, "顶栏没有的信息要留下")
+        self.assertIn("已加载插件", self.page)
+
+    def test_conn_card_is_polled(self):
+        """留下的卡片要跟着 /ui/status 走，否则等于静态摆设"""
+        self.assertIn('id="dashConnVal"', self.page)
+        self.assertIn('id="dashConnDesc"', self.page)
+        self.assertIn("dashConnVal", self.status["text"])
+        # 页面上已经没有的元素，接口里也别再喂（那是"接口看着在工作"的假象）
+        self.assertNotIn("dashBotVal", self.status["text"])
+        self.assertNotIn("botStatusArea", self.status.get("html", {}))
+        self.assertNotIn("dashBotDesc", self.status.get("html", {}))
+
+    def test_sidebar_stacks_above_action_bar(self):
+        """齿轮弹出的卡片/账号浮层向右探出侧栏：侧栏层级必须高于底部操作栏"""
+        def zidx(sel):
+            m = re.search(re.escape(sel) + r"\{[^}]*z-index:(\d+)", self.css)
+            return int(m.group(1)) if m else None
+
+        self.assertIsNotNone(zidx(".sidebar"), "侧栏要有显式 z-index")
+        self.assertGreater(zidx(".sidebar"), zidx(".action-bar"))
+
+
 class NapCatEntryTest(unittest.TestCase):
     """用户要求：侧栏「概览」下面常驻一个 NapCat 管理入口，用 NapCat 官方图标"""
 
@@ -1175,9 +1244,12 @@ class WindowChromeTest(unittest.TestCase):
 
     def test_buttons_drive_actions(self):
         """按钮必须靠 data-act 走面板的全局委托 —— 只写 id 不挂 data-act 就是死按钮"""
-        for bid, act in (("dbWinMin", "win-min"), ("dbWinHide", "win-hide"), ("dbWinQuit", "win-quit")):
-            self.assertIn(f'id="{bid}"', self.index)
-            self.assertIn(f'data-act="{act}"', self.index, f"{bid} 必须挂 data-act={act}")
+        parts = self.index.split("function installWindowChrome()", 1)
+        self.assertEqual(len(parts), 2, "要先有 installWindowChrome")
+        body = parts[1]
+        for bid, act in (("winMin", "win-min"), ("winHide", "win-hide"), ("winQuit", "win-quit")):
+            self.assertIn(f'id="{bid}"', body, f"{bid} 要真的注入到顶栏里")
+            self.assertIn(f'data-act="{act}"', body, f"{bid} 必须挂 data-act={act}")
             self.assertIn(f"'{act}':", self.index, f"{act} 处理器要在")
 
     def test_rpc_registered(self):
@@ -1188,4 +1260,20 @@ class WindowChromeTest(unittest.TestCase):
     def test_drag_region(self):
         self.assertIn("-webkit-app-region:drag", self.css, "无边框窗口必须有拖动区")
         self.assertIn("no-drag", self.css, "按钮要排除拖动，否则点不动")
+
+    def test_buttons_are_injected_into_the_shared_header(self):
+        """三按钮要真的被注入到共用顶栏右侧。
+
+        踩过的坑：原来那条 #desktopBar 的标记在 panel.js 之后解析，panel.js 里
+        `getElementById` 拿到 null 直接 return → 顶栏恒 display:none，三按钮和拖动区
+        一起失效（v0.6.0 起一直没显示过，测试只查"标记里有 data-act"所以没抓住）。"""
+        self.assertIn("function installWindowChrome()", self.index, "要有注入函数")
+        self.assertIn("installWindowChrome();", self.index, "光定义不调用 = 还是没按钮")
+        self.assertIn("location.protocol !== 'file:'", self.index, "只在桌面壳（file://）注入")
+        self.assertIn("right.appendChild(box)", self.index, "要塞进顶栏右侧")
+        self.assertIn("box.id = 'winCtl'", self.index)
+        for act in ("win-min", "win-hide", "win-quit"):
+            self.assertIn(f'data-act="{act}"', self.index, f"注入的按钮要带 {act}")
+        self.assertIn("pywebview-drag-region", self.index,
+                      "拖动交给 pywebview 认的类名（WebView2 不看 -webkit-app-region）")
 
