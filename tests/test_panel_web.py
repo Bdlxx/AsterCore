@@ -1233,7 +1233,8 @@ class WindowChromeTest(unittest.TestCase):
     def test_chrome_injected_into_shared_header(self):
         self.assertIn("function installWindowChrome", self.index, "要有注入函数")
         self.assertIn("installWindowChrome()", self.index, "要被调用")
-        for bid in ("winMin", "winHide", "winQuit"):
+        # 三键按用户要求改成系统默认那套：最小化 / 最大化·还原 / 关闭（✕ = 收进托盘）
+        for bid in ("winMin", "winMax", "winClose"):
             self.assertIn(bid, self.index, f"{bid} 要被创建")
         # 注入目标是**共用顶栏**：codex 最新版用 `.header-right`，我这份较早的版本直接挂 `.header`
         # → 两者都算"顶栏"，只要不是又挂回那个死容器 #desktopBar 就行
@@ -1314,3 +1315,84 @@ class TextSelectTest(unittest.TestCase):
                "index.html").read_text(encoding="utf-8")
         self.assertIn("pywebview-drag-region", idx, "拖动区改用 pywebview-drag-region")
 
+class WindowCloseFlowTest(unittest.TestCase):
+    """（合自 codex 本地线）标题栏三键：图标对上功能 / 直接绑 click / ✕ 二选一 + 记住选择
+
+    这些是"服务端那份还没接到"的改动（见 AGENT_SYNC.md 第 4/5/6 条）：
+      · 图标换成线条图标，语义与功能一致（U+25FB 白方块会被当成"最大化"，用户会点错）
+      · 三键直接绑 click，**不挂 data-act**：委托那条路会经过 PANEL.act 的 runBusy，
+        而 runBusy 结束时把按钮 innerHTML 恢复原样 → "最大化→还原"的图标切换被盖回去（实测踩到）
+      · 点 ✕ 弹「关闭窗口 / 退出程序」+「记住我的选择」，写进 /api/setup/window，
+        设置页同一项可改（用户要求）
+    """
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.index = (root / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+        self.launch = (root / "src" / "astercore" / "launch.py").read_text(encoding="utf-8")
+
+    def _chrome(self):
+        parts = self.index.split("function installWindowChrome()", 1)
+        self.assertEqual(len(parts), 2, "要先有 installWindowChrome")
+        return parts[1].split("/* 账号弹窗两步走", 1)[0]      # 只截到函数结束
+
+    def test_buttons_direct_click_not_delegate(self):
+        """三键直接绑 click，不挂 data-act —— 走委托会被 runBusy 的 innerHTML 还原盖掉图标"""
+        fn = self._chrome()
+        for bid in ("winMin", "winMax", "winClose"):
+            self.assertIn(f'id="{bid}"', fn, f"{bid} 要真的注入到顶栏里")
+            self.assertIn(f"getElementById('{bid}').addEventListener('click'", fn,
+                          f"{bid} 要直接绑 click")
+            self.assertNotIn(f'id="{bid}" data-act', fn, f"{bid} 不该再挂 data-act（会双发请求）")
+        self.assertIn("PANEL.hooks._winToggleMax = toggleMax", self.index)
+        self.assertIn("PANEL.hooks._winHide = ", self.index, "遗留 win-hide 入口要能收到实现")
+        for act in ("win-min", "win-hide", "win-quit"):
+            self.assertIn(f"'{act}':", self.index, f"{act} 处理器要在（旧容器还在用它）")
+
+    def test_icons_match_functions(self):
+        """图标要跟功能对上：最小化=横线 / 最大化·还原=方框（含双方框）/ 关闭=叉"""
+        fn = self._chrome()
+        self.assertIn('class="win-ico"', fn, "要用线条图标")
+        markup = fn.split("const box = document.createElement('span');", 1)[1]
+        self.assertNotIn("&#9723;", markup, "字符字形一律不许再出现（U+25FB 会被当成最大化）")
+        self.assertEqual(markup.count("ico(ICON."), 3, "三个按钮各挂一个图标")
+        for key in ("min:", "max:", "restore:", "close:"):
+            self.assertIn(key, fn, f"图标表要含 {key}")
+
+    def test_close_dialog_offers_both_actions(self):
+        """点 ✕ 提示"关闭窗口 / 退出程序"，勾了"记住选择"就写进设置，之后不再问"""
+        fn = self._chrome()
+        self.assertIn("winCloseDlg", fn, "要有自建关闭弹窗")
+        self.assertIn('data-wc="tray"', fn, "关闭窗口（后台运行）那一个")
+        self.assertIn('data-wc="quit"', fn, "退出程序那一个")
+        self.assertIn("wcRemember", fn, "要有「记住我的选择」勾选框")
+        self.assertIn("/api/setup/window", fn, "记住选择要写进设置（两处共用一份值）")
+        self.assertIn("act = 'ask'", fn, "读不到设置要退化成询问，不能默认关人程序")
+        self.assertIn("getElementById('winClose').addEventListener('click', onWinClose)", fn)
+
+    def test_close_action_rpc_registered(self):
+        """桌面壳是 file://，只走进程内 RPC —— /api/setup/window 必须也注册一份"""
+        self.assertIn('_reg_rpc(hub, "/api/setup/window"', self.launch)
+        self.assertIn("set_close_action", self.launch)
+
+    def test_settings_page_has_close_action_card(self):
+        """点 ✕ 的默认动作要能在设置页改（用户要求）"""
+        try:
+            from astercore.web.server import ManagerWebPanel
+            from astercore.app import AppState
+            from astercore.core.manager import AccountManager
+        except ImportError:
+            raise unittest.SkipTest("flask 未安装")
+        tmp = tempfile.TemporaryDirectory()
+        base = Path(tmp.name)
+        (base / "accounts").mkdir(parents=True)
+        state = AppState(base)
+        state.load()
+        panel = ManagerWebPanel(AccountManager(accounts_dir=base / "accounts"),
+                                lambda: None, app_state=state)
+        html = panel.app.test_client().get("/ui/page/settings").get_json()["data"]["html"]
+        tmp.cleanup()
+        self.assertIn('id="wc_close"', html, "设置页要有这一项")
+        for value in ("ask", "tray", "quit"):
+            self.assertIn(f'<option value="{value}"', html, f"缺 {value} 选项")
+        self.assertIn("窗口与关闭行为", html)

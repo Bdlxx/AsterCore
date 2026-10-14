@@ -727,6 +727,10 @@ class ManagerWebPanel:
                 authed = self.auth.mode == "none" or bool(session.get("ac_auth"))
                 ctx["auth"] = {"authed": authed, "mode": self.auth.mode,
                                "config": self.auth.public()}
+            if page in ("settings", "settings-window"):
+                # 点 ✕ 的默认动作（设置页可改；自建关闭弹窗也读它）
+                ctx["window"] = (self.app_state.window_config() if self.app_state is not None
+                                 else {"close_action": "ask"})
             return ctx
 
         @app.get("/ui/page/<page>")

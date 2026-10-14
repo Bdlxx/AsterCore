@@ -174,6 +174,22 @@ def add_setup_routes(app, state, auth=None) -> None:
         return _ok({"page_mode": mode, "port": state.page_config()["port"],
                     "restart_needed": True})
 
+    # ---------------- 关闭窗口（点 ✕）时的行为 ----------------
+    # 用户要求：点 ✕ 弹窗里勾"记住我的选择"就固定下来，之后到设置页改 ——
+    # 两处读写同一份 state.data["window"]，所以这里给 GET/POST 一对。
+    @app.get("/api/setup/window")
+    def setup_get_window():
+        return _ok(state.window_config())
+
+    @app.post("/api/setup/window")
+    def setup_set_window():
+        from flask import request
+        d = request.get_json(silent=True) or {}
+        ok, msg = state.set_close_action(d.get("close_action"))
+        if not ok:
+            return _err(msg)
+        return _ok(state.window_config())
+
 
 # --------------------------------------------------------------------------- #
 # 页面

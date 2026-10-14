@@ -555,6 +555,28 @@ def _auto_hint(kind: str) -> str:
       </div>"""
 
 
+def _settings_window(ctx):
+    """窗口与关闭行为（用户要求：点 ✕ 的默认动作要能在设置里改）。
+
+    弹窗里勾了「记住我的选择」写的就是这一项；两处共用同一个值。
+    """
+    w = ctx.get('window') or {}
+    act = str(w.get('close_action') or 'ask')
+    choices = (('ask', '每次询问（弹窗里选，可勾"记住选择"）'),
+               ('tray', '关闭窗口（收进托盘，机器人继续在后台运行）'),
+               ('quit', '直接退出程序（连机器人和插件一起结束）'))
+    opts = ''.join(f'<option value="{k}"{" selected" if k == act else ""}>{esc(v)}</option>'
+                   for k, v in choices)
+    return card('🪟 窗口与关闭行为', f"""
+      <div class="cf-form">
+        <div class="cf-field"><label class="cf-label" for="wc_close">点窗口右上角 ✕ 时</label>
+          <select id="wc_close" data-wc="close_action">{opts}</select>
+          <div class="cf-help">窗口是无边框的，"关闭"和"退出"是两件事：关闭只收进托盘，
+            机器人继续跑（托盘图标左键再打开、右键可退出）。</div></div>
+        <div id="wcMsg" style="font-size:12px;color:var(--text-secondary);margin-top:10px"></div>
+      </div>""")
+
+
 def _settings_all(ctx):
     """设置（合并页）：左侧只留一个「设置」入口，右侧三张卡片各管一块。
 
@@ -563,12 +585,14 @@ def _settings_all(ctx):
     """
     return (
         '<div class="cf-help" style="margin-bottom:10px">'
-        '这一页集中三块设置：<b>① 当前状态</b>、<b>② 安全设置</b>、<b>③ 页面与端口</b>。'
+        '这一页集中四块设置：<b>① 当前状态</b>、<b>② 安全设置</b>、<b>③ 页面与端口</b>、'
+        '<b>④ 窗口与关闭行为</b>。'
         '改完立即生效并保存，不需要点保存按钮。'
         '<br>登录模式（NapCat / 内置协议 / 演示）在「账号」页的添加、编辑弹窗里选。</div>'
         + _runtime_status_cards(ctx)
         + _settings_auth(ctx) + _auto_hint('auth')
         + _settings_page(ctx) + _auto_hint('page')
+        + _settings_window(ctx) + _auto_hint('window')
     )
 
 

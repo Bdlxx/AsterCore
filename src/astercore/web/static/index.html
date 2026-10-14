@@ -372,17 +372,92 @@ function installWindowChrome() {
       '.header button,.header a{-webkit-app-region:no-drag}',
       '.win-ctl{display:flex;align-items:center;gap:2px;margin-left:2px;padding-left:8px;',
       '  border-left:1px solid var(--border-color)}',
-      '.win-ctl button{width:32px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;',
-      '  color:var(--text-regular);font-family:inherit;font-size:13px;line-height:1;cursor:pointer}',
+      '.win-ctl button{display:flex;align-items:center;justify-content:center;width:34px;height:28px;padding:0;',
+      '  border:0;border-radius:6px;background:transparent;color:var(--text-regular);cursor:pointer}',
       '.win-ctl button:hover{background:var(--bg-hover);color:var(--text-primary)}',
       '.win-ctl button.danger:hover{background:#c0392b;color:#fff}',
+      '.win-ctl button:focus-visible{outline:2px solid var(--color-primary);outline-offset:-2px}',
+      /* 线条图标，跟面板其余图标同一套画法（lucide 路径、2px 圆头） */
+      '.win-ico{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;',
+      '  stroke-linecap:round;stroke-linejoin:round}',
+      /* 关闭弹窗（复用共用 .ui-modal 的外观，只补它自己那点样式） */
+      '#winCloseDlg .wc-remember{display:flex;align-items:flex-start;gap:8px;margin:14px 0 2px;',
+      '  font-size:13px;color:var(--text-regular);cursor:pointer}',
+      '#winCloseDlg .wc-remember input{width:auto;margin:3px 0 0;flex:0 0 auto}',
+      '#winCloseDlg .ui-modal-actions{flex-wrap:wrap}',
     ].join('\n');
     document.head.appendChild(st);
   }
   [document.querySelector('.header'), document.querySelector('.header-breadcrumb')]
     .forEach(function (el) { if (el) el.classList.add('pywebview-drag-region'); });
-  /* 双击顶栏（拖动区）＝ 最大化/还原：无边框窗口没有系统最大化按钮。
-     ⚠ 必须挂在**真的存在且可见**的拖动区上：以前这句挂在 #desktopBar 上，而那段标记
+  /* 标题栏用**系统默认那套三键**：最小化(横线) / 最大化·还原(方框) / 关闭(叉)。
+     图标语义必须与功能一致 —— 以前用字符字形，其中 U+25FB 白方块在标题栏里就是
+     "最大化/还原"，却挂在"收起托盘"上，用户会点错。
+     三段路径用 | 分隔（每段一个 <path>）。 */
+  const ico = function (paths) {
+    return '<svg class="win-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+      + paths.split('|').map(function (d) { return '<path d="' + d + '"/>'; }).join('')
+      + '</svg>';
+  };
+  const ICON = {
+    min: 'M5 12h14',                                    /* 一条横线 */
+    max: 'M4.5 4.5h15v15h-15z',                         /* 单方框 */
+    restore: 'M9 8.5h10.5v10.5h-10.5z|M4.5 15.5V4.5h11', /* 双方框：已最大化 */
+    close: 'M18 6 6 18|M6 6 18 18',                     /* 叉 */
+  };
+  const maxed = { v: false };
+  const toggleMax = async function (btn) {
+    const r = await post('/api/app/window', { action: 'maximize' });
+    if (r && r.ok && !(r.data && r.data.done === false)) {
+      maxed.v = !maxed.v;
+      const b = document.getElementById('winMax');
+      if (b) { b.innerHTML = ico(maxed.v ? ICON.restore : ICON.max); }
+    }
+    return r;
+  };
+  /* 点 ✕ 时怎么办，由设置决定（用户要求）：ask 每次询问 / tray 收进托盘 / quit 退出程序。
+     这一项存在服务端 runtime.json（/api/setup/window），设置页与这里的弹窗读写同一份值
+     —— 所以弹窗里勾的"记住选择"会立刻出现在设置页里，改设置也立刻影响这里。 */
+  const winAction = function (action) { post('/api/app/window', { action: action }); };
+  let closeResolver = null;
+  const closeDialog = function (show) {
+    const d = document.getElementById('winCloseDlg');
+    if (!d) return;
+    d.hidden = !show;
+    if (show) { const c = document.getElementById('wcRemember'); if (c) c.checked = false; }
+  };
+  const askCloseAction = function () {                 /* → 'tray' | 'quit' | null(取消) */
+    return new Promise(function (resolve) { closeResolver = resolve; closeDialog(true); });
+  };
+  const answerClose = function (action) {
+    const chk = document.getElementById('wcRemember');
+    const remember = !!(action && chk && chk.checked);
+    closeDialog(false);
+    const r = closeResolver;
+    closeResolver = null;
+    if (remember) {                                    /* 勾了就固定下来，之后可在设置里改 */
+      post('/api/setup/window', { close_action: action }).then(function (res) {
+        if (res && res.ok) {
+          PANEL.toast('以后点 ✕ ' + (action === 'tray' ? '直接收进托盘（可在设置里改）'
+                                                       : '直接退出程序（可在设置里改）'), 'success');
+        }
+      });
+    }
+    if (r) r(action);
+  };
+  const onWinClose = async function () {
+    let act = 'ask';
+    try {
+      const r = await j('/api/setup/window');
+      act = String(((r || {}).data || {}).close_action || 'ask');
+    } catch (e) { act = 'ask'; }                        /* 读不到就问，别拿错默认值关人程序 */
+    if (act === 'tray') { winAction('hide'); return; }
+    if (act === 'quit') { winAction('quit'); return; }
+    const pick = await askCloseAction();
+    if (pick) winAction(pick === 'quit' ? 'quit' : 'hide');
+  };
+  /* 双击顶栏（拖动区）＝ 最大化/还原。
+     ⚠ 必须挂在**真的存在且可见**的拖动区上：以前挂在 #desktopBar 上，而那段标记
      在本文件里位于 panel.js 之后才解析，`getElementById` 拿到 null 就直接 return，
      双击一直没生效（和"三按钮不显示"是同一个坑）。 */
   const header = document.querySelector('.header');
@@ -391,20 +466,55 @@ function installWindowChrome() {
       const t = e.target;
       if (!t) return;
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.closest('button') || t.closest('a')) return;
-      post('/api/app/window', { action: 'maximize' });
+      toggleMax();
     });
   }
   const box = document.createElement('span');
   box.id = 'winCtl';
   box.className = 'win-ctl';
   box.innerHTML =
-    '<button type="button" id="winMin" data-act="win-min" title="最小化窗口"'
-    + ' aria-label="最小化窗口">&#8211;</button>'
-    + '<button type="button" id="winHide" data-act="win-hide"'
-    + ' title="关闭窗口（保留托盘，随时点托盘图标再打开）" aria-label="关闭窗口保留托盘">&#9723;</button>'
-    + '<button type="button" id="winQuit" class="danger" data-act="win-quit" title="退出程序"'
-    + ' aria-label="退出程序">&#10005;</button>';
+    '<button type="button" id="winMin" title="最小化窗口"'
+    + ' aria-label="最小化窗口">' + ico(ICON.min) + '</button>'
+    + '<button type="button" id="winMax" title="最大化 / 还原窗口"'
+    + ' aria-label="最大化或还原窗口">' + ico(ICON.max) + '</button>'
+    + '<button type="button" id="winClose" class="danger"'
+    + ' title="关闭窗口（后台继续运行，点托盘图标可再打开）" aria-label="关闭窗口，保留后台运行">'
+    + ico(ICON.close) + '</button>';
   right.appendChild(box);
+  /* 直接绑 click，**不走 data-act 委托**：委托那条路会经过 PANEL.act 的 runBusy，
+     而 runBusy 结束时会把按钮 innerHTML 恢复成原样（最大化→还原的图标切换会被它盖回去），
+     顺带还会给窗口按钮弹 toast、按成 busy 态 —— 标题栏按钮不该有这些。 */
+  document.getElementById('winMin').addEventListener('click', function () {
+    post('/api/app/window', { action: 'minimize' });
+  });
+  document.getElementById('winMax').addEventListener('click', toggleMax);
+  document.getElementById('winClose').addEventListener('click', onWinClose);
+  PANEL.hooks._winToggleMax = toggleMax;      /* 双击顶栏与遗留按钮共用同一份状态 */
+  PANEL.hooks._winHide = function () { return post('/api/app/window', { action: 'hide' }); };
+  /* 关闭弹窗：两个动作 + 「记住我的选择」（勾了就写进设置） */
+  const closeBox = document.createElement('div');
+  closeBox.id = 'winCloseDlg';
+  closeBox.className = 'ui-modal';
+  closeBox.hidden = true;
+  closeBox.innerHTML =
+    '<div class="ui-modal-backdrop" data-wc="cancel"></div>'
+    + '<div class="ui-modal-box"><h2 class="ui-modal-title">关闭窗口后，机器人怎么办？</h2>'
+    + '<div class="ui-modal-msg">「关闭窗口」= 把窗口收进托盘：机器人与插件继续在后台运行，'
+    + '点托盘图标可以再打开。「退出程序」= 连机器人和插件一起结束。</div>'
+    + '<label class="wc-remember"><input type="checkbox" id="wcRemember">'
+    + '记住我的选择，以后点 ✕ 不再询问（可在「设置 → 窗口与关闭行为」里改）</label>'
+    + '<div class="ui-modal-actions">'
+    + '<button type="button" class="btn btn-default" data-wc="cancel">取消</button>'
+    + '<button type="button" class="btn btn-default" data-wc="tray">关闭窗口（后台运行）</button>'
+    + '<button type="button" class="btn btn-primary" data-wc="quit">退出程序</button>'
+    + '</div></div>';
+  document.body.appendChild(closeBox);
+  closeBox.addEventListener('click', function (e) {
+    const el = e.target && e.target.closest ? e.target.closest('[data-wc]') : null;
+    if (!el) return;
+    const v = el.getAttribute('data-wc');
+    answerClose(v === 'cancel' ? null : v);
+  });
 }
 
 /* 账号弹窗两步走（用户要求：先选连接方式，再填对应信息）。
@@ -591,12 +701,21 @@ function bindSettingsAutoSave() {
       ? ('已保存' + (r.data && r.data.restart_needed ? '（重启后生效）' : ''))
       : ((r && r.error) || '保存失败'), !(r && r.ok));
   };
+  /* 点 ✕ 的默认动作（关窗弹窗里勾的"记住选择"写的是同一项） */
+  const saveWindow = async function () {
+    const sel = document.getElementById('wc_close');
+    if (!sel) return;
+    formMsg('svwindowMsg', '保存中…');
+    const r = await post('/api/setup/window', { close_action: sel.value });
+    formMsg('svwindowMsg', (r && r.ok) ? '已保存' : ((r && r.error) || '保存失败'), !(r && r.ok));
+  };
 
   root.addEventListener('change', function (e) {
     const t = e.target;
     if (!t) return;
     if (t.id === 'sp_mode' || t.id === 'sp_port') { savePage(); return; }
     if (t.id === 'au_mode' || t.id === 'au_pwd') { saveAuth(); return; }
+    if (t.id === 'wc_close') { saveWindow(); return; }
     if (t.hasAttribute && t.hasAttribute('data-rt')) { saveRuntime(); return; }
     if (t.hasAttribute && t.hasAttribute('data-act') && t.getAttribute('data-act') === 'rt-pick') {
       saveRuntime();
@@ -764,9 +883,21 @@ PANEL.hooks = {
       await post('/api/app/window', { action: 'minimize' });
       return { ok: true, message: '已最小化' };
     },
+    /* 下面三条是**遗留**的 data-act 入口（本文件末尾那段已废弃的 #desktopBar 还在用）。
+       顶栏上真正可见的三按钮是 installWindowChrome() 里直接绑的 click，不走这里。 */
+    'win-max': async function () {
+      const r = await (PANEL.hooks._winToggleMax || function () {
+        return post('/api/app/window', { action: 'maximize' });
+      })();
+      const ok = !!(r && r.ok);
+      return { ok: ok, message: ok ? '已切换窗口大小' : ((r && r.error) || '切换失败') };
+    },
     'win-hide': async function () {
-      await post('/api/app/window', { action: 'hide' });
-      return { ok: true, message: '已收起到托盘（点托盘图标可再打开）' };
+      const r = await (PANEL.hooks._winHide || function () {
+        return post('/api/app/window', { action: 'hide' });
+      })();
+      if (r && r.cancelled) return { ok: true, message: '已取消' };
+      return { ok: true, message: '已收起到托盘（右键托盘图标可退出程序）' };
     },
     'win-quit': async function () {
       await post('/api/app/window', { action: 'quit' });
@@ -1168,6 +1299,5 @@ try {
   }
 } catch (e) { }
 </script>
-<!-- 桌面端顶栏 + 账号浮层（能力探测：Linux 端无 /api/app/* 时自动隐藏，见 panel.js） -->
 </body>
 </html>

@@ -58,5 +58,48 @@ class AppStateTest(unittest.TestCase):
         self.assertTrue(BACKEND_MODES["lagrange"]["needs_ack"])
 
 
+class WindowCloseActionTest(unittest.TestCase):
+    """点 ✕ 的默认动作：默认每次询问、写进去要能持久化、非法值要拒。
+
+    用户要求：点 ✕ 弹窗里选"关闭窗口 / 退出程序"，勾了"记住选择"就固定下来，
+    之后到「设置 → 窗口与关闭行为」改 —— 两处读写的就是这一份值。
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_default_is_ask(self):
+        st = AppState(self.tmp)
+        st.load()
+        self.assertEqual(st.window_config()["close_action"], "ask")
+
+    def test_set_and_persist(self):
+        st = AppState(self.tmp)
+        st.load()
+        for act in ("tray", "quit", "ask"):
+            ok, err = st.set_close_action(act)
+            self.assertTrue(ok, err)
+            st2 = AppState(self.tmp)
+            st2.load()
+            self.assertEqual(st2.window_config()["close_action"], act, "要落盘到 runtime.json")
+
+    def test_rejects_unknown(self):
+        st = AppState(self.tmp)
+        st.load()
+        ok, err = st.set_close_action("rm -rf")
+        self.assertFalse(ok)
+        self.assertIn("关闭行为", err)
+        self.assertEqual(st.window_config()["close_action"], "ask", "非法值不能改到状态")
+
+    def test_broken_value_in_file_falls_back(self):
+        st = AppState(self.tmp)
+        st.load()
+        st.data["window"] = {"close_action": "????"}
+        self.assertEqual(st.window_config()["close_action"], "ask")
+
+
 if __name__ == "__main__":
     unittest.main()

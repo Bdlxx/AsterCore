@@ -530,6 +530,17 @@ async def _run_desktop(args, state, panel, hub, mgr, http_url: str,
 
         _reg_rpc(hub, "/api/setup/state", _setup_state)
         _reg_rpc(hub, "/api/setup/page", _setup_page)
+
+        def _setup_window(p=None):
+            """点 ✕ 的行为（GET=读、带 close_action=写）；返回值与 HTTP 那份同形"""
+            p = p or {}
+            if "close_action" in p:
+                ok, msg = state.set_close_action(p.get("close_action"))
+                if not ok:
+                    raise ValueError(msg)        # _reg_rpc 会包成 {ok:false,error}
+            return state.window_config()
+
+        _reg_rpc(hub, "/api/setup/window", _setup_window)
     except Exception:                       # noqa: BLE001 注册失败不能拖垮启动
         logging.getLogger("astercore.launch").exception("桌面 RPC 接口注册失败")
 

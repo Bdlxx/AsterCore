@@ -13,6 +13,12 @@ from typing import Any
 
 log = logging.getLogger("astercore.app")
 
+# 点窗口右上角 ✕ 时的行为（设置页可改；自建的关闭弹窗勾了"记住"也会写这里）
+#   ask  每次询问（推荐默认）
+#   tray 关闭窗口 = 收进托盘，后台继续跑
+#   quit 直接退出程序
+WINDOW_CLOSE_ACTIONS = ("ask", "tray", "quit")
+
 # 后端模式说明（供向导展示；文案留给前端，这里只给机器可读元数据）
 BACKEND_MODES: dict[str, dict[str, Any]] = {
     "napcat": {
@@ -194,6 +200,27 @@ class AppState:
     @property
     def current_account(self) -> str:
         return str(self.data.get("current_account") or "")
+
+    # ---- 关闭窗口（点 ✕）时的行为 ----
+    def window_config(self) -> dict[str, Any]:
+        """{"close_action": ask|tray|quit}；没设过或值非法都退回 ask"""
+        cfg = dict(self.data.get("window") or {})
+        act = str(cfg.get("close_action") or "").strip().lower()
+        if act not in WINDOW_CLOSE_ACTIONS:
+            act = "ask"
+        return {"close_action": act}
+
+    def set_close_action(self, action: str) -> tuple[bool, str]:
+        """写 close_action（设置页与关闭弹窗的"记住选择"共用这一处）"""
+        act = str(action or "").strip().lower()
+        if act not in WINDOW_CLOSE_ACTIONS:
+            return False, "关闭行为只能是 每次询问 / 收进托盘 / 退出程序"
+        cfg = dict(self.data.get("window") or {})
+        cfg["close_action"] = act
+        self.data["window"] = cfg
+        self.save()
+        log.info("关闭窗口行为已保存：%s", act)
+        return True, ""
 
     def set_current_account(self, account_id: str) -> None:
         self.data["current_account"] = str(account_id)

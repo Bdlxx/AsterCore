@@ -56,9 +56,16 @@ def main(verbose: bool) -> int:
         for _id in ids:
             check(f"{src_name} 有 #{_id}", f'id="{_id}"' in srcs[src_name])
 
-    # 2) 自绘窗口三按钮：DOM + data-act + 处理器
-    for bid in ("winMin", "winHide", "winQuit"):
+    # 2) 自绘窗口三按钮：DOM + （直接绑 click）
+    #    用户要求改成系统默认那套：最小化 / 最大化·还原 / 关闭（✕ = 收进托盘）。
+    #    三键**不再挂 data-act**：委托那条路会经过 PANEL.act 的 runBusy，而 runBusy
+    #    结束时把按钮 innerHTML 恢复原样 → "最大化→还原"的图标切换会被它盖回去（实测踩到）。
+    for bid in ("winMin", "winMax", "winClose"):
         check("chrome 里创建了 " + bid, bid in idx)
+        check(f"{bid} 直接绑了 click", f"getElementById('{bid}').addEventListener('click'" in idx)
+    check("三键不走 data-act 委托", 'id="winMin" data-act' not in idx)
+    check("✕ 的关闭/退出二选一弹窗在", "winCloseDlg" in idx and 'data-wc="quit"' in idx)
+    check("关闭行为写进设置（/api/setup/window）", "/api/setup/window" in idx)
 
     # 4) 双击顶栏 = 最大化（无边框后没有系统最大化按钮）
     check("顶栏绑了 dblclick", "addEventListener('dblclick'" in idx)
