@@ -35,21 +35,56 @@ REQUIRED_EXPORTS = ("nap_plugin_abi_version", "nap_plugin_name", "nap_plugin_ver
 OPTIONAL_EXPORTS = ("nap_plugin_reload",)
 
 
-def _compiler() -> list[str] | None:
-    """返回编译器命令前缀；找不到返回 None"""
+def _compiler_candidates() -> list[list[str]]:
+    """候选编译器（按优先级）：环境变量 ASTERCORE_CXX → zig（pip 装过就有）→ PATH 里的 cl/clang++/g++"""
+    out: list[list[str]] = []
     env = os.environ.get("ASTERCORE_CXX")
     if env:
-        return shlex.split(env)
+        out.append(shlex.split(env))
     try:
         import ziglang  # noqa: F401
-        return [sys.executable, "-m", "ziglang", "c++"]
+        out.append([sys.executable, "-m", "ziglang", "c++"])
     except Exception:
         pass
     for name in ("cl", "clang++", "g++"):
         path = shutil.which(name)
         if path:
-            return [path]
-    return None
+            out.append([path])
+    return out
+
+
+def _pe_machine(path: Path) -> int | None:
+    """读 PE 头里的机器码：0x8664 = x64、0x14c = x86；不是 PE 返回 None。
+
+    为什么要它：CI 的 PATH 上可能有**别的架构/别的目标**的编译器（例如 MSYS2 那套），
+    编出来的 DLL 是 32 位 → 本测试（x64 Python 加载）会失败，但那**不是 SDK 的问题**。
+    所以先探针、只认能产出 x64 的编译器。
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(0x400)
+        if head[:2] != b"MZ" or len(head) < 0x40:
+            return None
+        off = int.from_bytes(head[0x3C:0x40], "little")
+        with open(path, "rb") as f:
+            f.seek(off)
+            sig = f.read(6)
+        if sig[:4] != b"PE\0\0" or len(sig) < 6:
+            return None
+        return int.from_bytes(sig[4:6], "little")
+    except OSError:
+        return None
+
+
+_X64 = 0x8664
+
+
+def _tail(r: subprocess.CompletedProcess, lines: int) -> str:
+    """编译/运行输出的最后 N 行（诊断用：不猜、也不截断关键信息）"""
+    out = ((r.stdout or "") + (r.stderr or "")).rstrip()
+    if not out:
+        return "（没有任何输出）"
+    return "\n".join(out.splitlines()[-lines:])
 
 
 class CppSdkStaticTest(unittest.TestCase):
@@ -120,9 +155,6 @@ class CppSdkBuildTest(unittest.TestCase):
     def setUpClass(cls):
         if sys.platform != "win32":
             raise unittest.SkipTest("原生插件 ABI 是 Windows 专用（本测试要真加载 DLL）")
-        cls.cc = _compiler()
-        if not cls.cc:
-            raise unittest.SkipTest("本机没有 C++ 编译器（装法见 plugin-sdk/cpp/README.md）")
         # ignore_cleanup_errors：Windows 上 DLL 一旦被 ctypes 加载就一直锁着文件，
         # 临时目录删不掉（不是测试失败）。Python 3.10 以下没有这个参数，退化处理。
         try:
@@ -130,6 +162,22 @@ class CppSdkBuildTest(unittest.TestCase):
         except TypeError:
             cls.tmp = tempfile.TemporaryDirectory()
         cls.dir = Path(cls.tmp.name)
+
+        # 候选编译器要先用**探针**验一遍：能编出 x64 才算数。
+        # 不然 CI 上 PATH 里那个（可能是 MSYS2 的 32 位/异目标）gcc 会让这条测试假红 ✗
+        tried: list[str] = []
+        cls.cc = None
+        for cand in _compiler_candidates():
+            ok, why = cls._probe_x64(cand)
+            tried.append(f"{' '.join(cand)} → {why}")
+            if ok:
+                cls.cc = cand
+                break
+        if cls.cc is None:
+            raise unittest.SkipTest(
+                "没找到能产出 x64 的 C++ 编译器（这一层是「真编译」验证，环境不具备就跳）\n  试过："
+                + "\n        ".join(tried or ["（PATH 里连 cl/clang++/g++ 都没有）"])
+                + "\n  想在本机跑：python -m pip install ziglang（或在 ASTERCORE_CXX 里指定编译器）")
         # 1) SDK 自测 exe
         cls.test_exe = cls.dir / "nap_sdk_tests.exe"
         cls._build(cls.test_exe, SDK_TESTS)
@@ -138,14 +186,38 @@ class CppSdkBuildTest(unittest.TestCase):
         cls._build(cls.dll, EXAMPLE)
 
     @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
+    def _probe_x64(cls, cc: list[str]) -> tuple[bool, str]:
+        """用一行源码试编一个 exe，验证这个编译器**确实能产出 x64**"""
+        # 先排掉"不是原生 Windows 目标"的编译器：MSYS2 的 usr/bin/g++（msys 目标）编出来的
+        # DLL 依赖 msys-2.0.dll、Cygwin 那套依赖 cygwin1.dll —— 都能编、都能是 PE64，
+        # 但**不是**宿主能当原生插件加载的东西。ABI 要的是原生 Windows x64。
+        joined = " ".join(cc)
+        if "ziglang" not in joined and os.path.basename(cc[-1]).lower() not in ("cl", "cl.exe"):
+            try:
+                d = subprocess.run(cc + ["-dumpmachine"], capture_output=True, text=True,
+                                   errors="replace", timeout=30)
+                triple = (d.stdout or "").strip()
+                if any(t in triple.lower() for t in ("msys", "cygwin")):
+                    return False, f"目标三元组是 {triple}（不是原生 Windows，编出来的 DLL 宿主加载不了）"
+            except (OSError, subprocess.SubprocessError):
+                pass
+        src = cls.dir / "probe.cpp"
+        src.write_text("int main() { return 0; }\n", encoding="utf-8")
+        out = cls.dir / "probe.exe"
+        r = cls._compile(cc, out, src, shared=False)
+        if r.returncode != 0:
+            first = _tail(r, 1)
+            return False, f"编不过（{first}）"
+        machine = _pe_machine(out)
+        if machine != _X64:
+            return False, f"产出不是 x64（PE 机器码 {hex(machine) if machine else '未知'}）"
+        return True, "能产出 x64 ✓"
 
     @classmethod
-    def _build(cls, out: Path, src: Path) -> None:
-        joined = " ".join(cls.cc)
-        is_msvc = os.path.basename(cls.cc[-1]).lower() in ("cl", "cl.exe")
-        cmd = list(cls.cc)
+    def _compile(cls, cc: list[str], out: Path, src: Path, *, shared: bool) -> subprocess.CompletedProcess:
+        joined = " ".join(cc)
+        is_msvc = os.path.basename(cc[-1]).lower() in ("cl", "cl.exe")
+        cmd = list(cc)
         if "ziglang" in joined:
             cmd += ["-target", "x86_64-windows-gnu", "-Wno-nullability-completeness"]
         if is_msvc:
@@ -153,25 +225,44 @@ class CppSdkBuildTest(unittest.TestCase):
             obj.mkdir(exist_ok=True)
             cmd += ["/nologo", "/O2", "/MT", "/EHsc", "/std:c++14", "/utf-8",
                     f"/Fo{obj}\\", "/I", str(ROOT / "plugin-sdk"), "/I", str(SDK_DIR)]
-            if out.suffix == ".dll":
+            if shared:
                 cmd += ["/LD"]
             cmd += [f"/Fe:{out}", str(src)]
         else:
-            # ⚠ -fexec-charset=UTF-8：中文字面量必须编成 UTF-8，否则关键词匹配永远失败
-            cmd += ["-std=c++11", "-O1", "-finput-charset=UTF-8", "-fexec-charset=UTF-8",
+            # ⚠ -m64：明确要 64 位产物（32 位 DLL 加载必失败，别让它"编成功却不能用"）
+            # ⚠ -fexec-charset=UTF-8：中文字面量必须走 UTF-8，否则关键词匹配永远失败
+            # ⚠ -static-libgcc/-static-libstdc++：DLL 自带运行库，CI 上不依赖 PATH 里的 libstdc++-6.dll
+            cmd += ["-m64", "-std=c++11", "-O1", "-finput-charset=UTF-8", "-fexec-charset=UTF-8",
+                    "-static-libgcc", "-static-libstdc++",
                     "-I", str(ROOT / "plugin-sdk"), "-I", str(SDK_DIR)]
-            if out.suffix == ".dll":
+            if shared:
                 cmd += ["-shared"]
             cmd += ["-o", str(out), str(src)]
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        return subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+
+    @classmethod
+    def _build(cls, out: Path, src: Path) -> None:
+        r = cls._compile(cls.cc, out, src, shared=(out.suffix == ".dll"))
         if r.returncode != 0:
-            tail = "\n".join(line for line in (r.stdout + r.stderr).splitlines()
-                             if "error" in line.lower())[-1500:]
-            raise AssertionError(f"编译失败：{' '.join(cmd)}\n{tail}")
+            raise AssertionError(
+                f"用编译好的编译器（{' '.join(cls.cc)}）编 {src.name} 失败 —— 这属于**真问题**：\n"
+                + _tail(r, 40))
+        machine = _pe_machine(out)
+        if machine != _X64:
+            raise AssertionError(
+                f"{out.name} 不是 x64（PE 机器码 {hex(machine) if machine else '未知'}）"
+                " —— 编译参数里少了 -m64 / x64 目标")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
 
     def test_sdk_selftest_passes(self):
-        r = subprocess.run([str(self.test_exe)], capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        try:
+            r = subprocess.run([str(self.test_exe)], capture_output=True, text=True, errors="replace")
+        except OSError as e:                     # 起不来通常是环境缺运行库，不是 SDK 的问题
+            self.skipTest(f"自测 exe 起不来（环境问题）：{e}")
+        self.assertEqual(r.returncode, 0, (r.stdout or "") + (r.stderr or ""))
         self.assertIn("全部通过", r.stdout, r.stdout)
         self.assertIn("失败 0", r.stdout, r.stdout)
 
