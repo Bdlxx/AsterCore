@@ -74,7 +74,13 @@ def main(verbose: bool) -> int:
     # 4) 双击顶栏 = 最大化（无边框后没有系统最大化按钮）
     check("顶栏绑了 dblclick", "addEventListener('dblclick'" in idx)
     check("双击调 maximize", "action: 'maximize'" in idx)
-    check("点按钮不算双击标题栏", "tagName === 'BUTTON'" in idx)
+    # 实现无关：排除按钮的常见写法任一都算（我原来只认 tagName 比较，codex 用的是 closest）
+    check("双击要排除按钮",
+          any(x in idx for x in ("tagName === 'BUTTON'", 'tagName === "BUTTON"',
+                                 "closest('button')", 'closest("button")',
+                                 "matches('button')", 'matches("button")')))
+    check("双击不再挂在已废弃的 #desktopBar 上",
+          "desktopBar' ).addEventListener" not in idx and "desktopBar').addEventListener" not in idx)
     check("后端有 toggle_maximize", "def toggle_maximize" in shell)
     check("RPC 支持 maximize", 'action == "maximize"' in launch)
 

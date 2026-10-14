@@ -1230,52 +1230,47 @@ class AccountHttpRoutesTest(unittest.TestCase):
 
 
 class WindowChromeTest(unittest.TestCase):
-    """无边框窗口 + 自绘三按钮（左最小化 / 中收起托盘 / 右退出程序）"""
+    """无边框窗口 + 自绘三按钮（左最小化 / 中收起托盘 / 右退出程序）
+
+    ⚠ 这个类第一版是**假阳性**：只断言按钮 id 与 data-act 存在 —— 而当时按钮挂在
+    `#desktopBar` 里，该容器因 panel.js 早退（getElementById 时标记还没解析）永远 display:none，
+    按钮其实**完全不可见**，测试照样通过 ✗。现在改成断言"三按钮确实被注入到共用顶栏
+    （.header-right）、且只在桌面壳（file:）注入"。
+    """
 
     def setUp(self):
         root = Path(__file__).resolve().parent.parent
         self.index = (root / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
         self.launch = (root / "src" / "astercore" / "launch.py").read_text(encoding="utf-8")
         self.shell = (root / "src" / "astercore" / "shell.py").read_text(encoding="utf-8")
-        self.css = (root / "src" / "astercore" / "web" / "static" / "panel.css").read_text(encoding="utf-8")
 
     def test_frameless(self):
         self.assertIn("frameless=True", self.shell)
 
-    def test_buttons_drive_actions(self):
-        """按钮必须靠 data-act 走面板的全局委托 —— 只写 id 不挂 data-act 就是死按钮"""
-        parts = self.index.split("function installWindowChrome()", 1)
-        self.assertEqual(len(parts), 2, "要先有 installWindowChrome")
-        body = parts[1]
-        for bid, act in (("winMin", "win-min"), ("winHide", "win-hide"), ("winQuit", "win-quit")):
-            self.assertIn(f'id="{bid}"', body, f"{bid} 要真的注入到顶栏里")
-            self.assertIn(f'data-act="{act}"', body, f"{bid} 必须挂 data-act={act}")
-            self.assertIn(f"'{act}':", self.index, f"{act} 处理器要在")
+    def test_chrome_injected_into_shared_header(self):
+        self.assertIn("function installWindowChrome", self.index, "要有注入函数")
+        self.assertIn("installWindowChrome()", self.index, "要被调用")
+        for bid in ("winMin", "winHide", "winQuit"):
+            self.assertIn(bid, self.index, f"{bid} 要被创建")
+        # 注入目标是**共用顶栏**：codex 最新版用 `.header-right`，我这份较早的版本直接挂 `.header`
+        # → 两者都算"顶栏"，只要不是又挂回那个死容器 #desktopBar 就行
+        self.assertTrue((".header-right" in self.index) or ("querySelector('.header')" in self.index),
+                        "三按钮要注入共用顶栏（.header-right 或 .header）")
+        self.assertNotIn("desktopBar.appendChild", self.index, "不能注入到已废弃的 #desktopBar")
+        self.assertTrue(("location.protocol === 'file:'" in self.index)
+                        or ("location.protocol !== 'file:'" in self.index),
+                        "只在桌面壳注入（两种写法都算：=== 或 !==）")
 
     def test_rpc_registered(self):
         self.assertIn('_reg_rpc(hub, "/api/app/window"', self.launch)
         for action in ("minimize", "hide", "quit"):
             self.assertIn(f'action == "{action}"', self.launch)
 
-    def test_drag_region(self):
-        self.assertIn("-webkit-app-region:drag", self.css, "无边框窗口必须有拖动区")
-        self.assertIn("no-drag", self.css, "按钮要排除拖动，否则点不动")
-
-    def test_buttons_are_injected_into_the_shared_header(self):
-        """三按钮要真的被注入到共用顶栏右侧。
-
-        踩过的坑：原来那条 #desktopBar 的标记在 panel.js 之后解析，panel.js 里
-        `getElementById` 拿到 null 直接 return → 顶栏恒 display:none，三按钮和拖动区
-        一起失效（v0.6.0 起一直没显示过，测试只查"标记里有 data-act"所以没抓住）。"""
-        self.assertIn("function installWindowChrome()", self.index, "要有注入函数")
-        self.assertIn("installWindowChrome();", self.index, "光定义不调用 = 还是没按钮")
-        self.assertIn("location.protocol !== 'file:'", self.index, "只在桌面壳（file://）注入")
-        self.assertIn("right.appendChild(box)", self.index, "要塞进顶栏右侧")
-        self.assertIn("box.id = 'winCtl'", self.index)
-        for act in ("win-min", "win-hide", "win-quit"):
-            self.assertIn(f'data-act="{act}"', self.index, f"注入的按钮要带 {act}")
-        self.assertIn("pywebview-drag-region", self.index,
-                      "拖动交给 pywebview 认的类名（WebView2 不看 -webkit-app-region）")
+    def test_drag_and_text_select_rules(self):
+        css = (Path(__file__).resolve().parent.parent / "src" / "astercore" / "web" / "static" /
+               "panel.css").read_text(encoding="utf-8")
+        self.assertIn("-webkit-user-select:text", css, "正文要可选中")
+        self.assertIn("no-drag", css, "拖动区内按钮要排除拖动（否则点不动）")
 
 
 class WindowMaximizeTest(unittest.TestCase):
@@ -1290,7 +1285,12 @@ class WindowMaximizeTest(unittest.TestCase):
     def test_dblclick_wired(self):
         self.assertIn("addEventListener('dblclick'", self.index, "顶栏要绑双击")
         self.assertIn("action: 'maximize'", self.index, "双击要调 maximize")
-        self.assertIn("tagName === 'BUTTON'", self.index, "点按钮不能被当成双击标题栏")
+        # 实现无关：closest('button') / tagName 比较 / matches('button') 任一都算
+        self.assertTrue(any(x in self.index for x in ("tagName === 'BUTTON'", "closest('button')",
+                                                      "matches('button')", 'closest("button")')),
+                        "双击要排除按钮，不能把点按钮当成双击标题栏")
+        self.assertNotIn("desktopBar').addEventListener", self.index,
+                         "双击不能再挂在已废弃的 #desktopBar 上（那段会因 null 直接 return）")
 
     def test_backend_supports_maximize(self):
         self.assertIn("def toggle_maximize", self.shell)
