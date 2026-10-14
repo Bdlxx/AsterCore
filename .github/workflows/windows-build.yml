@@ -74,18 +74,19 @@ jobs:
 
       - name: Add docs to package
         shell: pwsh
-        # ⚠ 必须显式 shell: pwsh —— 原来就有这行，我上一版漏掉 ✗ → 该步在 windows-latest 的
-        #   默认 shell（Windows PowerShell 5.1）下跑，`git ls-files` 的返回值不是数组，
-        #   `-not $files` / `.Count` 行为不同 → run #46 就死在这一步（闸门第 5、6 步反而是过的）。
-        # ⚠ docs 按 **git 跟踪清单**复制：v0.6.26 包里混进了 docs/Windows版开发计划书.md.bak-…，
-        #   真实根因是 tag 打在"取消跟踪"之前（干净 checkout 不可能有未跟踪文件）。
+        # 关于 docs：v0.6.26 的包里混进了 docs/Windows版开发计划书.md.bak-20261014-0038。
+        # 真实根因是 **tag 打在"取消跟踪"之前**（CI 是干净 checkout，不可能有未跟踪文件），
+        # 那个 .bak 现在既不在磁盘也没被跟踪。
+        # 这里刻意**沿用原本能work的整目录复制**（run #46/#47 我改成 git ls-files 逐个复制，
+        # 因无法在本机验证 git 的中文路径转义等行为而连续两次卡在这一步），
+        # 另加一道**结构性守卫**：目标里一旦出现 .bak 立刻失败。
         run: |
           Copy-Item "pack/使用说明.txt" "dist/astercore/使用说明.txt" -Force
-          New-Item -ItemType Directory -Force -Path "dist/astercore/docs" | Out-Null
-          $files = @(git ls-files docs)
-          if ($files.Length -eq 0) { throw "git ls-files docs 返回空 —— 打包前请确认 docs 已提交" }
-          foreach ($f in $files) { Copy-Item -LiteralPath $f -Destination "dist/astercore/docs" -Force }
-          Write-Host "docs 已按 git 清单复制 $($files.Length) 个"
+          if (Test-Path "docs") { Copy-Item "docs" "dist/astercore/docs" -Recurse -Force }
+          $baks = @(Get-ChildItem "dist/astercore/docs" -Recurse -File -Filter "*.bak*" -ErrorAction SilentlyContinue)
+          if ($baks.Length -gt 0) { throw "docs 里混进了备份文件：$($baks.Name -join ', ')" }
+          if (-not (Test-Path "dist/astercore/docs")) { throw "docs 没进包" }
+          Write-Host "docs 已复制（无 .bak）"
           if (Test-Path "docs/常见问题FAQ.md") { Copy-Item "docs/常见问题FAQ.md" "dist/astercore/常见问题FAQ.md" -Force }
           if (Test-Path "README.md") { Copy-Item "README.md" "dist/astercore/README.md" -Force }
           # .NET Framework 运行时配置必须与 exe 同级（PyInstaller 的 datas 只会进 _internal）
