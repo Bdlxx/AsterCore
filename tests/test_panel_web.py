@@ -1277,3 +1277,22 @@ class WindowChromeTest(unittest.TestCase):
         self.assertIn("pywebview-drag-region", self.index,
                       "拖动交给 pywebview 认的类名（WebView2 不看 -webkit-app-region）")
 
+
+class WindowMaximizeTest(unittest.TestCase):
+    """无边框窗口没有系统最大化按钮 → 双击顶栏拖动区切换最大化/还原"""
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.index = (root / "src" / "astercore" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+        self.launch = (root / "src" / "astercore" / "launch.py").read_text(encoding="utf-8")
+        self.shell = (root / "src" / "astercore" / "shell.py").read_text(encoding="utf-8")
+
+    def test_dblclick_wired(self):
+        self.assertIn("addEventListener('dblclick'", self.index, "顶栏要绑双击")
+        self.assertIn("action: 'maximize'", self.index, "双击要调 maximize")
+        self.assertIn("tagName === 'BUTTON'", self.index, "点按钮不能被当成双击标题栏")
+
+    def test_backend_supports_maximize(self):
+        self.assertIn("def toggle_maximize", self.shell)
+        self.assertIn('action == "maximize"', self.launch)
+

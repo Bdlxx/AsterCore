@@ -1142,6 +1142,17 @@ PANEL.endpoints.page = function (p) {
   return url;
 };
 
+/* 无边框窗口：双击顶栏的拖动区 = 最大化/还原（系统最大化按钮已不存在） */
+(function () {
+  var bar = document.getElementById('desktopBar');
+  if (!bar) { return; }
+  bar.addEventListener('dblclick', function (e) {
+    if (e.target && e.target.tagName === 'BUTTON') { return; }   /* 点按钮不算双击标题栏 */
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'A')) { return; }
+    post('/api/app/window', { action: 'maximize' });
+  });
+})();
+
 PANEL.start();
 
 /* 深链：/?page=settings-page —— 启动后点一下对应导航项（复用面板自己的路由） */
