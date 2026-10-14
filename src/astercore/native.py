@@ -89,6 +89,29 @@ def _load_library(path: str | Path) -> ctypes.CDLL:
     return ctypes.CDLL(str(path))
 
 
+def symbol_candidates(name: str) -> list[str]:
+    """导出符号的候选名（无修饰优先）。
+
+    为什么要试多个：**易语言**这类编译器的"公开子程序"导出时常带修饰
+    （`_nap_plugin_on_event` / `_nap_plugin_on_event@4`）。x64 上本不该有修饰，
+    但真机出现过，所以这里按无修饰优先依次试 —— 对合规 DLL 没有任何影响。
+
+    ⚠ 调用约定仍是 **cdecl**（ABI 约定）；带 `@N` 的写法是 32 位 stdcall 的装饰，
+    32 位插件 v1 不支持（见 `docs/ABI草案.md` §10.4）。
+    """
+    return [name, f"_{name}", f"{name}@4", f"_{name}@4"]
+
+
+def resolve_symbol(lib, name: str):
+    """按候选名取导出符号；全都没有就抛 AttributeError（消息里带上试过的名字）"""
+    for cand in symbol_candidates(name):
+        try:
+            return getattr(lib, cand)
+        except AttributeError:
+            continue
+    raise AttributeError(f"缺少导出符号 {name}（试过：{' / '.join(symbol_candidates(name))}）")
+
+
 class NapApi(ctypes.Structure):
     """对应 nap_plugin.h 的 NapApi（字段顺序必须一致）"""
 
@@ -165,8 +188,9 @@ class NativePlugin:
         check_platform_lib(self.lib_path)
         self._lib = _load_library(self.lib_path)
         # 校验 ABI
-        self._lib.nap_plugin_abi_version.restype = ctypes.c_int
-        ver = self._lib.nap_plugin_abi_version()
+        fn = resolve_symbol(self._lib, "nap_plugin_abi_version")
+        fn.restype = ctypes.c_int
+        ver = fn()
         if ver != _ABI_VERSION:
             raise RuntimeError(f"插件 ABI 版本不匹配: {ver} != {_ABI_VERSION}")
         log.info("原生插件 %s 库已加载（ABI v%d）",
@@ -174,13 +198,15 @@ class NativePlugin:
 
     def name(self) -> str:
         self.load()
-        self._lib.nap_plugin_name.restype = ctypes.c_char_p
-        return (self._lib.nap_plugin_name() or b"").decode()
+        fn = resolve_symbol(self._lib, "nap_plugin_name")
+        fn.restype = ctypes.c_char_p
+        return (fn() or b"").decode()
 
     def version(self) -> str:
         self.load()
-        self._lib.nap_plugin_version.restype = ctypes.c_char_p
-        return (self._lib.nap_plugin_version() or b"").decode()
+        fn = resolve_symbol(self._lib, "nap_plugin_version")
+        fn.restype = ctypes.c_char_p
+        return (fn() or b"").decode()
 
     def meta(self) -> PluginMeta:
         return PluginMeta(name=self.name(), name_cn=f"原生·{self.name()}",
@@ -197,24 +223,31 @@ class NativePlugin:
             alloc=self._api_impl.alloc,
             free=self._api_impl.free,
         )
-        self._lib.nap_plugin_init.restype = ctypes.c_int
+        fn = resolve_symbol(self._lib, "nap_plugin_init")
+        fn.restype = ctypes.c_int
         cfg = json.dumps(config or {}, ensure_ascii=False).encode("utf-8")
-        return self._lib.nap_plugin_init(cfg, ctypes.byref(api))
+        return fn(cfg, ctypes.byref(api))
 
     def handle_event(self, event: Event) -> bool:
         """把统一 Event JSON 喂给 nap_plugin_on_event"""
         payload = json.dumps(event.to_dict(), ensure_ascii=False,
                             separators=(",", ":")).encode("utf-8")
-        self._lib.nap_plugin_on_event.restype = ctypes.c_int
-        ret = self._lib.nap_plugin_on_event(payload)
+        fn = resolve_symbol(self._lib, "nap_plugin_on_event")
+        fn.restype = ctypes.c_int
+        ret = fn(payload)
         return ret == 1
 
     def unload(self) -> None:
         if self._lib is not None:
-            self._lib.nap_plugin_unload()
+            try:
+                resolve_symbol(self._lib, "nap_plugin_unload")()
+            except AttributeError:
+                log.warning("插件 %s 没有导出 nap_plugin_unload（跳过）", self.lib_path.name)
 
     def reload(self, config: dict[str, Any]) -> None:
-        if not hasattr(self._lib, "nap_plugin_reload"):
+        try:                                      # 可选导出：没有就当作"不支持热更"
+            fn = resolve_symbol(self._lib, "nap_plugin_reload")
+        except AttributeError:
             return
         cfg = json.dumps(config or {}, ensure_ascii=False).encode("utf-8")
-        self._lib.nap_plugin_reload(cfg)
+        fn(cfg)

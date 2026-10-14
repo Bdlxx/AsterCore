@@ -1,0 +1,80 @@
+' ─────────────────────────────────────────────────────────────
+' 栖星 AsterCore · 易语言插件导出声明（x64 / cdecl）
+' 用法：把下面「DLL命令」抄进易语言的 DLL命令表；偏移表用于直接调 NapApi 回调。
+' 注意：易语言的"公开子程序"默认 stdcall 风格，必须改成 cdecl（见 README 第一节）。
+' ─────────────────────────────────────────────────────────────
+
+' ---------- 你需要**导出**的函数（宿主按名字找；无修饰名优先，下划线修饰也能认） ----------
+.版本 2
+
+.子程序 nap_plugin_abi_version, 整数型, 公开
+    返回 (1)
+
+.子程序 nap_plugin_name, 整数型, 公开
+    ' 返回静态 UTF-8 字节集的数据地址（指针），别返回易语言文本对象
+    返回 (取变量数据地址 (g_name_bytes))
+
+.子程序 nap_plugin_version, 整数型, 公开
+    返回 (取变量数据地址 (g_version_bytes))
+
+.子程序 nap_plugin_init, 整数型, 公开
+    .参数 config_json, 整数型      ' char*（UTF-8）
+    .参数 api, 整数型              ' NapApi*（回调表指针，见下）
+    g_api = api
+    ' 需要 C 桥就先初始化它：
+    ' nap_bridge_init (api, 1)
+    返回 (0)
+
+.子程序 nap_plugin_on_event, 整数型, 公开
+    .参数 event_json, 整数型       ' char*（UTF-8 紧凑 JSON）
+    ' 解析 event_json → 命中就发动作 → 返回 1；没命中返回 0；出错返回 2
+    返回 (0)
+
+.子程序 nap_plugin_unload, , 公开
+    ' 结束自己开的线程、释放资源
+
+' ---------- 可选：配置热更 ----------
+.子程序 nap_plugin_reload, 整数型, 公开
+    .参数 config_json, 整数型
+    返回 (0)
+
+' ─────────────────────────────────────────────────────────────
+' NapApi 结构体（主程序注入）在 x64 下的偏移 —— 直接调用时按这个取指针：
+'   偏移  0 : abi_version (int, 4 字节；后面 4 字节为对齐填充)
+'   偏移  8 : action  函数指针  int action(char* action_json, char** out_json, int* out_len)
+'   偏移 16 : log     函数指针  void log(int level, char* msg)      level: 0调试 1信息 2警告 3错误
+'   偏移 24 : alloc   函数指针  void* alloc(unsigned long long size)
+'   偏移 32 : free    函数指针  void free(void* p)
+'   结构体大小 40 字节
+' ─────────────────────────────────────────────────────────────
+' 用 C 桥时（推荐）不需要关心偏移，直接声明这几个 DLL 命令即可：
+'   .DLL命令 nap_bridge_init, 整数型, "nap_bridge.dll", "nap_bridge_init", , 公开
+'       .参数 api, 整数型
+'       .参数 abi_version, 整数型
+'   .DLL命令 nap_bridge_log, , "nap_bridge.dll", "nap_bridge_log", , 公开
+'       .参数 level, 整数型
+'       .参数 msg, 文本型          ' 桥内部转 UTF-8
+'   .DLL命令 nap_bridge_action, 整数型, "nap_bridge.dll", "nap_bridge_action", , 公开
+'       .参数 action_json, 文本型
+'       .参数 out_buf, 字节集      ' 传址：返回体写这里
+'       .参数 out_cap, 整数型
+'   .DLL命令 nap_bridge_abi_check, 整数型, "nap_bridge.dll", "nap_bridge_abi_check", , 公开
+' ─────────────────────────────────────────────────────────────
+' 发消息的动作 JSON（紧凑、UTF-8）示例：
+'   {"action":"send_group","group_id":123456,"message":[{"type":"text","data":{"text":"你好"}}]}
+'   发私聊把 send_group+group_id 换成 send_private+user_id
+' ─────────────────────────────────────────────────────────────
+' 事件 JSON 里最常用的字段（§5）：
+'   type=message / message_type=group|private / raw=纯文本 / user_id / group_id / self_id / time
+'   判群： 寻找文本 (事件文本, {"message_type":"group"}, , 假) > 0
+' 提示：字节集查找比转文本再查找更快也更稳（转文本只在需要取中文时做）。
+' ─────────────────────────────────────────────────────────────
+' 分组开关键名（与 Linux 版一致，写错会"看着开了其实没开"）：
+'   wordlib / marry / pseudo（文件叫 pseudo_persona.py，键名是 pseudo）/ jm_downloader / video_parser
+' ─────────────────────────────────────────────────────────────
+' 静态字节集（UTF-8）写法示例：
+'   g_name_bytes = { 109, 121, 95, 112, 108, 117, 103, 105, 110 }        ' my_plugin
+'   g_version_bytes = { 48, 46, 49, 46, 48 }                            ' 0.1.0
+' ─────────────────────────────────────────────────────────────
+' 校验：python plugin-sdk/eyuyan/check_dll_exports.py --dll 你的插件.dll
+' ─────────────────────────────────────────────────────────────

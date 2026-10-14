@@ -8,7 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from astercore.native import (NativePlugin, check_platform_lib,
-                              expected_lib_format, lib_format)
+                              expected_lib_format, lib_format, resolve_symbol,
+                              symbol_candidates)
 from astercore.core.models import Event, seg_text
 
 LIB = (Path(__file__).resolve().parent.parent /
